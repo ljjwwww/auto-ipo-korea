@@ -1,0 +1,69 @@
+{
+  "https://example.invalid/posts/opinions-1": {
+    "input_hash": "c5884c88c872505f2605bff71712117faf521d6be862e36d355e03856736f52a",
+    "response": {
+      "status": "relevant",
+      "candidates": [
+        {
+          "name": "가상가람",
+          "opinion": "참여",
+          "evidence": "나는 가상가람 청약에 참여한다.",
+          "basis": "author_opinion"
+        },
+        {
+          "name": "가상누리",
+          "opinion": "조건부",
+          "evidence": "가상누리는 최종 경쟁률이 낮으면 참여하겠다.",
+          "basis": "author_opinion"
+        },
+        {
+          "name": "가상다온",
+          "opinion": "패스",
+          "evidence": "나는 가상다온 청약은 패스한다.",
+          "basis": "author_opinion"
+        },
+        {
+          "name": "가상라온",
+          "opinion": "판단 불가",
+          "evidence": "가상라온은 비교 대상으로만 언급한다.",
+          "basis": "mention"
+        }
+      ]
+    }
+  },
+  "https://example.invalid/posts/opinions-2": {
+    "input_hash": "2b0b0a38a3fd4a1dc424a4bf057e0ceff8a60d1d91ec153744b8bde4275211e2",
+    "response": {
+      "status": "relevant",
+      "candidates": [
+        {
+          "name": "가상가람",
+          "opinion": "패스",
+          "evidence": "나는 가상가람 청약을 패스한다.",
+          "basis": "author_opinion"
+        }
+      ]
+    }
+  },
+  "https://example.invalid/posts/insufficient-1": {
+    "input_hash": "f6073972f850e5f5570c8ed4f5170bc788ecb9e81de0c823293ddd2a9d8b5f40",
+    "response": {
+      "status": "insufficient",
+      "candidates": [
+        {
+          "name": "가상마루",
+          "opinion": "판단 불가",
+          "evidence": "가상마루 상세 분석은 본문에서 확인하세요.",
+          "basis": "insufficient"
+        }
+      ]
+    }
+  },
+  "https://example.invalid/posts/irrelevant-1": {
+    "input_hash": "fdb1b0879664e42d993eb72cb8c20fccd84ccf86e291a3839577aaaf99a48595",
+    "response": {
+      "status": "irrelevant",
+      "candidates": []
+    }
+  }
+}

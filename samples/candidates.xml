@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>가상 공모주 의견 샘플</title><link>https://example.invalid/ipo</link><description>고정 응답 검증용 가상 자료</description>
+<item><guid isPermaLink="false">opinions-1</guid><title>가상가람·가상누리·가상다온 공모주 검토</title><link>https://example.invalid/posts/opinions-1</link><pubDate>Fri, 13 Nov 2026 09:00:00 +0900</pubDate><description><![CDATA[<p>나는 가상가람 청약에 참여한다.</p><p>가상누리는 최종 경쟁률이 낮으면 참여하겠다.</p><p>나는 가상다온 청약은 패스한다.</p><p>가상라온은 비교 대상으로만 언급한다.</p>]]></description></item>
+<item><guid isPermaLink="false">opinions-2</guid><title>가상가람 공모주 후속 의견</title><link>https://example.invalid/posts/opinions-2</link><pubDate>Sat, 14 Nov 2026 10:00:00 +0900</pubDate><description>앞선 의견을 바꾼다. 나는 가상가람 청약을 패스한다.</description></item>
+<item><guid isPermaLink="false">insufficient-1</guid><title>가상마루 공모주 메모</title><link>https://example.invalid/posts/insufficient-1</link><description>가상마루 상세 분석은 본문에서 확인하세요.</description></item>
+<item><guid isPermaLink="false">irrelevant-1</guid><title>주말 산책 기록</title><link>https://example.invalid/posts/irrelevant-1</link><description>오늘은 공원에서 산책하고 커피를 마셨다.</description></item>
+</channel></rss>

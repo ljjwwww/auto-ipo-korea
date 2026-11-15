@@ -1,0 +1,5 @@
+<rss version="2.0"><channel><title>가상 본문 재분석 샘플</title>
+<item><guid>body-demo</guid><title>가상기업 공모주</title><link>https://example.invalid/body-demo</link><description>가상기업 공모주 상세 의견은 본문에 있습니다.</description></item>
+<item><guid>property-demo</guid><title>가상아파트 무순위 청약</title><link>https://example.invalid/property-demo</link><description>가상아파트 무순위 청약 안내입니다.</description></item>
+<item><guid>conditional-demo</guid><title>가상조건기업 공모주</title><link>https://example.invalid/conditional-demo</link><description>가상조건기업은 경쟁률이 낮으면 참여하겠다.</description></item>
+</channel></rss>

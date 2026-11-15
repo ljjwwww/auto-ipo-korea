@@ -1,0 +1,42 @@
+{
+  "03a34561581857d9b20346562a9036d07d3e47463609e521fe91050a7a3cac3f": {
+    "category": "ipo",
+    "candidates": [
+      {
+        "name": "가상기업",
+        "opinion": "판단 불가",
+        "evidence": "가상기업 공모주 상세 의견은 본문에 있습니다.",
+        "basis": "insufficient",
+        "stage": "unknown"
+      }
+    ]
+  },
+  "192cc0b19a6a19bd760be9059ab0eeaedd2104a8454a4df5c1b372c802af9d27": {
+    "category": "ipo",
+    "candidates": [
+      {
+        "name": "가상기업",
+        "opinion": "미참여",
+        "evidence": "가상기업 공모주 청약은 패스한다.",
+        "basis": "author_opinion",
+        "stage": "planned"
+      }
+    ]
+  },
+  "05e6d7d3286e2328a1bf34616c2657ac606fab6601361f02ad0aae57d7e7dcef": {
+    "category": "property",
+    "candidates": []
+  },
+  "2bd3b0e89d5d3834aa8c0ccb5490e050e642ecb1cf1b3e896966e5d5c89af3ab": {
+    "category": "ipo",
+    "candidates": [
+      {
+        "name": "가상조건기업",
+        "opinion": "조건부",
+        "evidence": "가상조건기업은 경쟁률이 낮으면 참여하겠다.",
+        "basis": "author_opinion",
+        "stage": "planned"
+      }
+    ]
+  }
+}
