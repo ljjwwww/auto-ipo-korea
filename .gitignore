@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local state and credentials
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Local OMX locking metadata
+.omx-state-locks/
+.omx-state-locks.identity.json
+
+# Local agent/runtime/host metadata (not project sources)
+.omx/
+.agents/
+.codex/
+.aws/
+*:Zone.Identifier
+*.log
+*.pem
+*.key
