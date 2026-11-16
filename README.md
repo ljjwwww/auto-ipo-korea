@@ -1,5 +1,7 @@
 # auto-ipo-korea
 
+현재 버전 **0.2.0** · [변경 이력](CHANGELOG.md)
+
 개인용 국내 공모주 정보 수집·분석 CLI. 공개 RSS에서 새 글을 저장하고, AI가 글쓴이의 청약 의견을 분석하며, 불확실한 글은 공개 본문으로 추가 확인하는 프로젝트입니다.
 
 **개발 중인 프로토타입입니다. 투자 추천이나 수익 보장 도구가 아니며 청약·매도 주문을 실행하지 않습니다.**
@@ -8,15 +10,16 @@
 
 | 기능 | 상태 |
 | --- | --- |
-| 출처 설정 → RSS 수집 → SQLite 저장·중복 방지 | 구현 및 실제 블로그 확인 |
+| 3개 출처 수집 → SQLite 관찰 저장·중복/변경 이력 | 구현 및 실제 블로그·유튜브 자막·사이트 확인 |
 | 공모주/부동산/기타 분류, 종목별 의견·근거·참여 시점 | 구현, 고정 응답·mock 테스트 검증 |
 | 불확실한 글의 공개 본문 수집·재분석 흐름 | 구현, 실제 본문 3건 접근 확인 |
+| 공통 분석 입력·실험 가중 판단·상태 전이·알림 미리보기 | 구현, 고정 응답 전용 오프라인 검증 |
 | 실제 AI 분석 정확도 | **미검증 — 실제 유료 API 호출 0회** |
 | Ollama Cloud 연동 | 다음 작업, 아직 미구현 |
 | 공식 공시 대조·Telegram/Slack·예약 실행 | 미구현 |
 | 청약·매도 자동화 | 미구현, 현재 수동 처리 방침 |
 
-실제 수집 출처는 사용자가 지정한 [네이버 블로그 hycj1025](https://blog.naver.com/hycj1025) 하나입니다. 출처 URL만 공개하며, 수집 원문·개인 DB·키는 저장소에 포함하지 않습니다.
+현재 코드에 정식 연결된 출처는 팽 [블로그](https://blog.naver.com/hycj1025), 기릿 유튜브, 기릿 공모주 사이트 세 곳입니다. 키 없는 수집·종목별 연결 후보 조회는 [3개 출처 사용법](docs/MULTI_SOURCE_USAGE.md)을 보세요. 출처 URL만 공개하며, 수집 원문·개인 DB·키는 저장소에 포함하지 않습니다.
 
 ## 시작하기
 
@@ -61,7 +64,30 @@ uv run ipo-monitor collect
 
 `config/sources.toml`의 활성 출처를 읽어 기본 `data/ipo-monitor.sqlite3`에 저장합니다. 새 글이 없으면 두 번째 실행은 0건입니다. 수집 시점에 따라 최초 개수는 다릅니다. 비활성화는 `enabled = false`, 다른 파일/DB는 `--config`, `--db`로 지정합니다. 상대 경로는 프로젝트 루트에서 실행하는 것을 전제로 합니다.
 
-수집은 제목·링크·원문 게시 시각·RSS 설명을 저장하며, `collect` 자체는 글 전문·AI·알림을 호출하지 않습니다. RSS의 설명은 제공자가 내려주는 텍스트이지 우리 프로그램이 요약한 값이 아닙니다. RSS에서 사라진 과거 글을 모두 복구하지는 못합니다.
+블로그 수집은 제목·링크·원문 게시 시각·RSS 설명을 저장하며, 통합 `collect`는 유튜브 자막·사이트 달력/표도 함께 저장합니다. `collect`는 AI·알림을 호출하지 않습니다. RSS의 설명은 제공자가 내려주는 텍스트이지 우리 프로그램이 요약한 값이 아닙니다. RSS에서 사라진 과거 글을 모두 복구하지는 못합니다.
+
+## 3개 출처 관찰 자료 조회 (AI 없음)
+
+```bash
+uv run ipo-monitor observations --stock 에스에프씨
+uv run ipo-monitor observations --stock 유캐스트 --history
+uv run ipo-monitor source-status
+```
+
+`config/stocks.toml`에 등록한 명시적 별칭으로 자료를 함께 찾습니다. 문자열 연결 후보일 뿐 공모 건 확정이나 참여 판단·가중 점수가 아닙니다. 전체 오프라인 재현과 수집 범위/실패 처리/기존 AI 명령과의 차이는 [사용법](docs/MULTI_SOURCE_USAGE.md)을 참고하세요.
+
+## 공통 분석 → 실험 판단 → 미발송 알림 (키·네트워크 없음)
+
+```bash
+uv run ipo-monitor collect --offline --config samples/assessment/sources.toml --db data/assessment-demo.sqlite3
+uv run ipo-monitor assess --db data/assessment-demo.sqlite3 --aliases samples/assessment/stocks.toml --fixture samples/assessment/responses.json
+uv run ipo-monitor assess --db data/assessment-demo.sqlite3 --aliases samples/assessment/stocks.toml --fixture samples/assessment/responses.json
+uv run ipo-monitor notification-preview --db data/assessment-demo.sqlite3 --aliases samples/assessment/stocks.toml
+```
+
+새 DB 기준 가상 3종목×3출처 입력9건 → 판단3건·미리보기3건. 같은 명령을 반복하면 분석 호출0건·재사용9건, 새 판단/미리보기0건입니다. 가상기업은 검토 후보, 가상대기기업은 판단 대기, 가상상충기업은 추가 확인으로 구분합니다. 고정 응답은 실제 작성자의 평가가 아닙니다.
+
+`config/decision.toml`에서 초기 가중치·임계값을 조정할 수 있고 정책/근거/변경 이력은 보존합니다. 원문의 의견·별점과 시스템의 실험 점수는 다른 값이며 **실제 AI 분석·수익 검증·메신저 전송은 아닙니다.** 상세 계약은 [분석·판단·미리보기 사용법](docs/ASSESSMENT_USAGE.md)을 참고하세요.
 
 ## 분석 동작과 안전 경계
 
@@ -91,7 +117,7 @@ uv run python -m compileall -q src tests scripts
 git diff --check
 ```
 
-2026-11-15 재검증: 오프라인 테스트 **83개 통과**. 실제 RSS 최초 50건/재실행 0건과 공개 본문 3건 접근은 2026-11-14에 확인했습니다. AI API는 mock이며 실제 모델 품질·Windows 예약 실행은 검증하지 않았습니다. 별도 lint/typecheck 도구는 아직 구성하지 않았습니다.
+2026-11-16 재검증: 오프라인 테스트 **183개 통과**. 통합 실제 수집은 블로그50건·유튜브3건(자막 포함)·사이트29건이며 재실행 신규/변경0건을 확인했습니다. 실제 RSS 최초 50건/재실행 0건과 공개 본문 3건 접근은 2026-11-14에 확인했습니다. AI API는 mock이며 실제 모델 품질·Windows 예약 실행은 검증하지 않았습니다. 별도 lint/typecheck 도구는 아직 구성하지 않았습니다.
 
 ## 문서와 AI 재개 순서
 
@@ -99,12 +125,14 @@ git diff --check
 | --- | --- |
 | [AGENTS.md](AGENTS.md) | AI 작업 지침, 승인 경계, 테스트 명령 |
 | [docs/HANDOFF_OLLAMA.md](docs/HANDOFF_OLLAMA.md) | 결정 이력·현재 구현·미검증·Ollama 전환 재개 프롬프트 |
+| [docs/ASSESSMENT_USAGE.md](docs/ASSESSMENT_USAGE.md) | 공통 분석·실험 정책·판단 이력·미발송 알림 |
+| [docs/MULTI_SOURCE_USAGE.md](docs/MULTI_SOURCE_USAGE.md) | 3개 출처 수집·변경 이력·종목별 후보 조회 명령 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 모듈·DB·스키마·캐시·보안 경계 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 개발·검증·fixture와 확장 절차 |
 | [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md) | 장기 사용자 여정·단계별 목표 |
 | [초기 프롬프트](docs/CODEX_IPO_MONITOR_PROMPT.md), [후속 프롬프트](docs/CODEX_IPO_NEXT_PROMPT.md) | 원본 요구 기록. 이후 인터뷰 결정이 우선 |
 
-다음 목표는 **Ollama Cloud 제공자·모델·한도를 사용자와 확정 → 어댑터와 오프라인 테스트 → 별도 승인한 소량 실호출**입니다. 이후 공식 일정 대조와 개인 알림을 구현합니다. 자동주문·게시·유료화는 별도 후속 범위입니다.
+최신 확정 계획은 **팽 블로그 + 기릿 유튜브 + 기릿 사이트의 데이터 축적 → 가중 종합 판단 → Telegram/Slack 개인 알림**입니다. 키 없는 수집·공통 분석 입력·실험 가중 판단·미발송 알림 묶음까지 구현했습니다. 실제 모델과 메신저 전송 연결·운영 정책 검증은 남아 있습니다. [3개 출처 계획](docs/MULTI_SOURCE_PLAN.md)을 참조하세요. 사용자는 이후 첫 수집 묶음 개발을 승인했고, 추가 인터뷰 없이 권장안으로 진행하도록 변경했습니다. 자동주문·게시·유료화는 별도 후속 범위입니다.
 
 ## 비밀정보·데이터·라이선스
 

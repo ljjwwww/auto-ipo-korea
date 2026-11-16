@@ -2,6 +2,25 @@
 
 현재 구현 기준: **2026-11-15**. 제품 의도는 [PRODUCT_VISION.md](PRODUCT_VISION.md), 재개 시점의 결정과 검증 이력은 [HANDOFF_OLLAMA.md](HANDOFF_OLLAMA.md)를 참고합니다.
 
+## 0.2.0 공통 분석·실험 판단·미리보기 계층
+
+- `evidence.py`: 사이트 종목명/등록 별칭으로 최신 관찰을 공통 분석 입력으로 만들고 snapshot별 provenance를 보존한다. 내용 hash는 로컬 ID·수집 시각과 분리한다.
+- `assessment.py`: fixture-only 분석/근거 검증·캐시, 정책 snapshot을 포함한 판단 저장, 현재 입력/정책과 조회 일치 여부 검사.
+- `decision.py`: 조정 가능한 실험 정책. 필드 평균 → 출처별 최신 글(알려진 발행시각 우선) → 작성자 그룹 평균 → 작성자 가중 평균. 원신호/비선택 근거 모두 보존.
+- `preview.py`: 미발송 로컬 메시지/outbox 전용. 네트워크와 실제 send 함수 없음.
+- 테이블 `observation_analyses`, `decision_versions`, `decision_current`, `decision_transitions`, `decision_transition_current`, `notification_outbox`를 추가한다. 계산 결과 버전 재사용과 시간순 상태 선택 전이를 분리한다. outbox의 `decision_id`는 이 계층에서 상태 전이 ID를 참조하는 논리 식별자다. 이전 버전 DB의 초기 버전/미리보기 ID는 동일 전이 ID로 보존한다.
+- 정책/원문/수집 상태 변경은 이전 판단을 재분석 필요로 표시하고, 과거 미리보기는 기본 표시에서 제외한다. 동일한 상태로 복귀해도 새 전이를 남긴다. 커버리지는 작성자별 점수 신호 확보율이지 성공확률·정확도·수익률이 아니다.
+
+상세 사용법/한계: [ASSESSMENT_USAGE.md](ASSESSMENT_USAGE.md). 실제 모델 호출과 메신저 연결은 아직 없다.
+
+## 3개 출처 관찰 계층 (2026-11-15 추가)
+
+`multisource.py`가 설정 검증·통합 수집·불변 관찰 저장·상태/후보 조회를 담당합니다. `youtube.py`는 제한된 채널 피드와 외부 yt-dlp 자막, `ipo_site.py`는 지정 공개 페이지의 달력/표를 읽습니다. AI 호출 없이 동작합니다.
+
+추가 테이블은 `tracked_sources`, `source_snapshots`, `source_attempts`이며 기존 테이블은 유지합니다. 같은 항목의 내용 해시를 마지막 스냅샷과 비교해 변경 시에만 append합니다. 과거 값으로 되돌아와도 변경 이력입니다. 한 출처 실패는 기록하고 나머지를 처리합니다. 문자열 일치는 종목 연결 후보이며 공모 건 병합/의견 확정이 아닙니다.
+
+아래 AI 분석 경로는 기존 블로그 `posts` 대상입니다. 통합 `collect`의 유튜브/사이트는 관찰 테이블에만 저장되며 기존 AI 입력으로 아직 연결하지 않았습니다. 세부 수집 범위·캐시·조회/실패 의미는 [MULTI_SOURCE_USAGE.md](MULTI_SOURCE_USAGE.md)를 참고하세요.
+
 ## 범위와 데이터 흐름
 
 Python CLI가 한 번 실행되고 종료되는 구조입니다. 예약 실행·알림·공식 일정 대조·청약·매도는 아직 없습니다.

@@ -1,0 +1,48 @@
+# 실험용 초기 정책: 수익성/확률 검증값이 아닌 검토 우선순위입니다.
+# 설정 변경은 다음 판단부터 반영하고 이전 판단의 정책/근거는 보존해야 합니다.
+version = "experimental-review-v1"
+expected_creators = ["팽", "기릿"]
+
+# 각 출처의 최신 관찰 하나만 사용. 같은 작성자의 여러 채널은 합산하지 않고 평균.
+[source_weights]
+rss = 1.0
+youtube = 1.0
+ipo_site = 1.0
+
+[creator_weights]
+"팽" = 1.0
+"기릿" = 1.0
+
+# 판단 불가/unknown은 매핑하지 않습니다. 누락을 부정 점수로 바꾸지 않습니다.
+[opinion_scores]
+"참여" = 1.0
+"조건부" = 0.25
+"미참여" = -1.0
+
+[assessment_scores]
+positive = 0.5
+negative = -0.5
+neutral = 0.0
+
+# 별점과 ❌는 원문 신호로 보존하며 아래 매핑은 조정 가능한 초기 가정입니다.
+[rating_scores]
+"0" = -1.0
+"1" = 0.0
+"2" = 0.5
+"3" = 1.0
+
+[rating]
+cross_score = -1.0
+
+# 사후 후기는 버리지 않되 초기 정책에서 작은 영향으로 명시합니다.
+[stage_factors]
+planned = 1.0
+applied = 1.0
+retrospective = 0.25
+unknown = 1.0
+
+[thresholds]
+candidate = 0.4
+low_priority = -0.4
+minimum_coverage = 0.5
+hold_on_source_issue = true

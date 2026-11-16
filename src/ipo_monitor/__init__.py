@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
-import tomllib
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 from xml.etree import ElementTree
@@ -127,6 +126,23 @@ def terminal_text(value: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in {"evidence-inputs","assess","decisions","notification-preview"}:
+        from .assessment import run_assessment,query_assessment
+        parser=argparse.ArgumentParser(description="세 출처 공통 입력·실험 판단·미발송 알림 (고정 응답만)")
+        parser.add_argument("command",choices=["evidence-inputs","assess","decisions","notification-preview"])
+        parser.add_argument("--db",type=Path,default=Path("data/ipo-monitor.sqlite3"))
+        parser.add_argument("--aliases",type=Path,default=Path("config/stocks.toml"))
+        parser.add_argument("--stock",action="append",help="종목명/등록 별칭 (반복 가능)")
+        parser.add_argument("--policy",type=Path,default=Path("config/decision.toml"))
+        if argv[0]=="assess":
+            parser.add_argument("--fixture",type=Path,required=True)
+            parser.add_argument("--channel",choices=["telegram","slack"],default="telegram")
+            parser.add_argument("--destination",default="preview",help="로컬 미리보기 식별자, 실제 채널 아님")
+        else:
+            parser.add_argument("--history",action="store_true")
+            parser.add_argument("--output",type=Path,help="공통 입력 내보내기 경로 (data/ 아래)")
+        args=parser.parse_args(argv)
+        return run_assessment(args) if args.command=="assess" else query_assessment(args)
     if argv and argv[0] == "pipeline-results":
         from .pipeline import list_results
         parser = argparse.ArgumentParser(description="AI 호출 없이 현재 입력의 단계별 결과 조회")
@@ -149,35 +165,24 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--refresh-body",action="store_true",help="성공 보관한 본문도 다시 읽기")
         return command(parser.parse_args(argv[1:]))
     if argv and argv[0] == "collect":
-        parser = argparse.ArgumentParser(description="설정된 공개 RSS를 한 번 수집합니다.")
+        from .multisource import collect_sources
+        parser = argparse.ArgumentParser(description="설정된 출처를 한 번 수집합니다. AI/알림/주문 없음")
         parser.add_argument("--config", type=Path, default=Path("config/sources.toml"))
         parser.add_argument("--db", type=Path, default=Path("data/ipo-monitor.sqlite3"))
-        args = parser.parse_args(argv[1:])
-        try:
-            with args.config.open("rb") as f:
-                config = tomllib.load(f)
-            sources = config.get("sources")
-            if not isinstance(sources, list) or not sources:
-                raise ValueError("sources 목록이 비어 있습니다")
-            for source in sources:
-                if (not isinstance(source, dict) or not isinstance(source.get("name"), str)
-                    or not source["name"].strip() or not isinstance(source.get("url"), str)
-                    or not source["url"].startswith(("https://", "http://"))
-                    or type(source.get("enabled")) is not bool):
-                    raise ValueError("각 출처에 name, HTTP(S) url, enabled 불리언이 필요합니다")
-        except (OSError, tomllib.TOMLDecodeError, ValueError) as exc:
-            print(f"설정 오류: {exc}", file=sys.stderr)
-            return 1
-        enabled = [source for source in sources if source["enabled"]]
-        if not enabled:
-            print("활성 출처가 없습니다.")
-            return 0
-        failed = 0
-        for source in enabled:
-            print(f"출처: {terminal_text(source['name'])}")
-            failed += main(["--feed", source["url"], "--db", str(args.db)]) != 0
-        print(f"수집 결과: {len(enabled)}개 출처, 실패 {failed}개")
-        return int(bool(failed))
+        parser.add_argument("--offline",action="store_true",help="fixture만 사용, 네트워크 차단")
+        parser.add_argument("--source",action="append",help="수집할 출처 ID (반복 가능)")
+        return collect_sources(parser.parse_args(argv[1:]))
+    if argv and argv[0] in {"observations","source-status"}:
+        from .multisource import query
+        parser=argparse.ArgumentParser(description="3개 출처 관찰 자료/상태 조회. AI 판단 아님")
+        parser.add_argument("command",choices=["observations","source-status"])
+        parser.add_argument("--db",type=Path,default=Path("data/ipo-monitor.sqlite3"))
+        parser.add_argument("--source",action="append",help="출처 ID")
+        parser.add_argument("--stock",help="종목명 또는 등록 별칭; 문자열 연결 후보 검색")
+        parser.add_argument("--aliases",type=Path,default=Path("config/stocks.toml"))
+        parser.add_argument("--history",action="store_true")
+        parser.add_argument("--limit",type=int,default=100)
+        return query(parser.parse_args(argv))
     if argv and argv[0] in {"extract", "candidates"}:
         import os
         from .extraction import DEFAULT_MODEL, run_command

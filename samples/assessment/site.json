@@ -1,0 +1,83 @@
+[
+  {
+    "item_id": "가상기업",
+    "title": "가상기업",
+    "url": "https://example.invalid/ipo",
+    "published_raw": "",
+    "published_at": null,
+    "payload": {
+      "stock_name": "가상기업",
+      "events": [
+        {
+          "date": "2026-11-20",
+          "kind": "subscription",
+          "raw_label": "청약) 가상기업⭐⭐",
+          "raw_marker": "⭐⭐",
+          "stars": 2
+        }
+      ],
+      "rating_observations": [
+        {
+          "raw_label": "청약) 가상기업⭐⭐",
+          "raw_marker": "⭐⭐",
+          "stars": 2
+        }
+      ],
+      "table_rows": []
+    }
+  },
+  {
+    "item_id": "가상대기기업",
+    "title": "가상대기기업",
+    "url": "https://example.invalid/ipo",
+    "published_raw": "",
+    "published_at": null,
+    "payload": {
+      "stock_name": "가상대기기업",
+      "events": [
+        {
+          "date": "2026-11-20",
+          "kind": "subscription",
+          "raw_label": "청약) 가상대기기업",
+          "raw_marker": "",
+          "stars": null
+        }
+      ],
+      "rating_observations": [
+        {
+          "raw_label": "청약) 가상대기기업",
+          "raw_marker": "",
+          "stars": null
+        }
+      ],
+      "table_rows": []
+    }
+  },
+  {
+    "item_id": "가상상충기업",
+    "title": "가상상충기업",
+    "url": "https://example.invalid/ipo",
+    "published_raw": "",
+    "published_at": null,
+    "payload": {
+      "stock_name": "가상상충기업",
+      "events": [
+        {
+          "date": "2026-11-20",
+          "kind": "subscription",
+          "raw_label": "청약) 가상상충기업❌",
+          "raw_marker": "❌",
+          "stars": null
+        }
+      ],
+      "rating_observations": [
+        {
+          "raw_label": "청약) 가상상충기업❌",
+          "raw_marker": "❌",
+          "stars": null
+        }
+      ],
+      "table_rows": []
+    }
+  }
+]

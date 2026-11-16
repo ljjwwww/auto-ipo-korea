@@ -1,0 +1,27 @@
+[[sources]]
+id = "demo-blog"
+type = "rss"
+name = "가상 블로그"
+creator = "가상 블로거"
+url = "https://example.invalid/rss"
+fixture = "blog.xml"
+enabled = true
+
+[[sources]]
+id = "demo-youtube"
+type = "youtube"
+name = "가상 유튜브"
+creator = "가상 크리에이터"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCw8pcmyPWGSik7bjJpeINlA"
+channel_id = "UCw8pcmyPWGSik7bjJpeINlA"
+fixture = "youtube.json"
+enabled = true
+
+[[sources]]
+id = "demo-site"
+type = "ipo_site"
+name = "가상 IPO 사이트"
+creator = "가상 크리에이터"
+url = "https://example.invalid/ipo"
+fixture = "site.json"
+enabled = true

@@ -1,0 +1,19 @@
+[
+  {
+    "item_id": "demoIPO0001",
+    "title": "가상기업 청약 의견",
+    "url": "https://www.youtube.com/watch?v=demoIPO0001",
+    "published_raw": "2026-11-15T09:00:00+09:00",
+    "published_at": "2026-11-15T09:00:00+09:00",
+    "payload": {
+      "summary": "가상기업의 자료를 살펴봅니다.",
+      "channel_id": "UCw8pcmyPWGSik7bjJpeINlA",
+      "captions": {
+        "status": "available",
+        "language": "ko-orig",
+        "text": "가상기업은 기관 데이터가 나오면 다시 살펴보겠습니다.",
+        "segments": [{"start": "00:00:10.000", "end": "00:00:14.000", "text": "가상기업은 기관 데이터가 나오면 다시 살펴보겠습니다."}]
+      }
+    }
+  }
+]

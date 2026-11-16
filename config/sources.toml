@@ -1,5 +1,28 @@
-# 공개 RSS 출처. enabled = false로 수집을 중지할 수 있습니다.
+# collect는 활성 출처를 순서대로 수집합니다. AI/알림/주문은 호출하지 않습니다.
 [[sources]]
-name = "hycj1025 네이버 블로그"
+id = "pang-blog"
+type = "rss"
+name = "팽 네이버 블로그"
+creator = "팽"
 url = "https://rss.blog.naver.com/hycj1025.xml"
+enabled = true
+
+[[sources]]
+id = "girit-youtube"
+type = "youtube"
+name = "기릿 유튜브"
+creator = "기릿"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCw8pcmyPWGSik7bjJpeINlA"
+channel_id = "UCw8pcmyPWGSik7bjJpeINlA"
+# 최신 영상 N개 자막만 확인. 실행 간 N개 초과 업로드는 누락될 수 있으므로 조정하세요.
+max_videos = 3
+refresh_subtitles = false
+enabled = true
+
+[[sources]]
+id = "girit-site"
+type = "ipo_site"
+name = "기릿 공모주 사이트"
+creator = "기릿"
+url = "https://letsgetitstock.com/ipo"
 enabled = true

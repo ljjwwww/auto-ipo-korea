@@ -1,0 +1,68 @@
+[
+  {
+    "item_id": "video-0",
+    "title": "가상기업 공모주 이야기",
+    "url": "https://example.invalid/video/0",
+    "published_raw": "2026-11-15T10:10:00+09:00",
+    "published_at": "2026-11-15T10:10:00+09:00",
+    "payload": {
+      "summary": "가상 발언 테스트",
+      "captions": {
+        "status": "available",
+        "language": "ko-orig",
+        "text": "가상기업은 경쟁률이 낮으면 참여하겠습니다.",
+        "segments": [
+          {
+            "start": "00:01:00.000",
+            "end": "00:01:05.000",
+            "text": "가상기업은 경쟁률이 낮으면 참여하겠습니다."
+          }
+        ]
+      }
+    }
+  },
+  {
+    "item_id": "video-1",
+    "title": "가상대기기업 공모주 이야기",
+    "url": "https://example.invalid/video/1",
+    "published_raw": "2026-11-15T10:10:00+09:00",
+    "published_at": "2026-11-15T10:10:00+09:00",
+    "payload": {
+      "summary": "가상 발언 테스트",
+      "captions": {
+        "status": "available",
+        "language": "ko-orig",
+        "text": "가상대기기업은 자료가 나오면 다시 판단하겠습니다.",
+        "segments": [
+          {
+            "start": "00:01:00.000",
+            "end": "00:01:05.000",
+            "text": "가상대기기업은 자료가 나오면 다시 판단하겠습니다."
+          }
+        ]
+      }
+    }
+  },
+  {
+    "item_id": "video-2",
+    "title": "가상상충기업 공모주 이야기",
+    "url": "https://example.invalid/video/2",
+    "published_raw": "2026-11-15T10:10:00+09:00",
+    "published_at": "2026-11-15T10:10:00+09:00",
+    "payload": {
+      "summary": "가상 발언 테스트",
+      "captions": {
+        "status": "available",
+        "language": "ko-orig",
+        "text": "가상상충기업은 청약하지 않겠습니다.",
+        "segments": [
+          {
+            "start": "00:01:00.000",
+            "end": "00:01:05.000",
+            "text": "가상상충기업은 청약하지 않겠습니다."
+          }
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,9 @@
+[[stocks]]
+name = "가상기업"
+aliases = ["DEMO"]
+[[stocks]]
+name = "가상대기기업"
+aliases = []
+[[stocks]]
+name = "가상상충기업"
+aliases = []

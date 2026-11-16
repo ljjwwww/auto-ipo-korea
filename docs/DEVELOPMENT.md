@@ -78,3 +78,13 @@ OpenAI와 Ollama의 키·엔드포인트·캐시 이름을 분리합니다. 기�
 ## 검증 경계
 
 이 문서 작성 시 `.venv/bin/python` 테스트·샘플 명령을 직접 실행했습니다. uv 설치/새 환경 구축과 실제 RSS/API 호출은 이 문서 작업에서 수행하지 않았습니다. 과거 공개 RSS·본문 접근 확인 기록은 인수인계 문서에 있으며, 이후 마크업·모델·계정 가용성을 보장하지 않습니다.
+
+## 3개 출처 수집 확장
+
+현재 회귀 기준은 테스트133개입니다. 신규 tests/test_multisource.py, test_youtube.py, test_ipo_site.py가 통합 저장/이력/조회, VTT/피드/다운로더, 사이트 달력/표를 검증합니다. 오프라인 실행 명령과 fixture 경로는 [MULTI_SOURCE_USAGE.md](MULTI_SOURCE_USAGE.md) 참조.
+
+이전 문서의 테스트83개와 RSS-only 설명은 초기 기준입니다. 기존 CLI 회귀를 유지하고 새 공급원의 원문 관찰을 AI 판단으로 위장하지 마세요. collect 설정은 세 출처로 늘었으나 AI pipeline은 블로그 posts만 분석합니다.
+
+## 0.2.0 분석·판단·미리보기
+
+회귀 기준은183개로 늘었다. tests/test_assessment.py가 원문 기반 검증·캐시·스냅샷/정책 무효화·상태 복귀 이력·미발송 중복 억제를, test_decision.py와 test_preview.py가 초기 정책·작성자 그룹·메시지 계약을 검증한다. [오프라인 재현](ASSESSMENT_USAGE.md)을 먼저 실행하며 실제 API나 실제 발송을 테스트 대체로 사용하지 않는다. pyproject/lock 버전은0.2.0, 신규 프로젝트 의존성은 없다.

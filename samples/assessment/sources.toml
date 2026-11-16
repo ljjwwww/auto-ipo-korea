@@ -1,0 +1,28 @@
+# 모든 원문·발언·평가·종목은 가상입니다.
+[[sources]]
+id = "sample-pang"
+type = "rss"
+name = "가상 팽 블로그"
+creator = "팽"
+url = "https://example.invalid/rss"
+fixture = "blog.xml"
+enabled = true
+
+[[sources]]
+id = "sample-girit-video"
+type = "youtube"
+name = "가상 기릿 영상"
+creator = "기릿"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCw8pcmyPWGSik7bjJpeINlA"
+channel_id = "UCw8pcmyPWGSik7bjJpeINlA"
+fixture = "youtube.json"
+enabled = true
+
+[[sources]]
+id = "sample-girit-site"
+type = "ipo_site"
+name = "가상 기릿 사이트"
+creator = "기릿"
+url = "https://example.invalid/ipo"
+fixture = "site.json"
+enabled = true
