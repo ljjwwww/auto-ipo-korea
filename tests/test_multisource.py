@@ -26,6 +26,20 @@ class MultiSourceTests(unittest.TestCase):
     def collect(self):return self.call(*self.args)
     def rows(self,sql):
         with sqlite3.connect(self.db) as conn:return conn.execute(sql).fetchall()
+    def db_rows(self,db,sql):
+        with sqlite3.connect(db) as conn:return conn.execute(sql).fetchall()
+    def youtube_config(self):
+        config=self.root/'youtube-only.toml';channel='UC'+'a'*22
+        config.write_text(f'''[[sources]]
+id = "demo-youtube"
+type = "youtube"
+name = "가상 유튜브"
+creator = "가상 크리에이터"
+url = "https://www.youtube.com/feeds/videos.xml?channel_id={channel}"
+channel_id = "{channel}"
+enabled = true
+''')
+        return config,channel
     def test_offline_three_sources_repeat_without_network_or_api(self):
         with patch('httpx.get',side_effect=AssertionError('network')),patch('httpx.stream',side_effect=AssertionError('network')),patch('httpx.post',side_effect=AssertionError('AI')):
             code,out=self.collect();self.assertEqual(code,0,out)
@@ -117,6 +131,59 @@ class MultiSourceTests(unittest.TestCase):
         p=self.config.parent/'youtube.json';items=json.loads(p.read_text())
         items[0]['payload']['captions']=None;p.write_text(json.dumps(items))
         code,out=self.collect();self.assertEqual(code,1,out)
+
+    def test_invalid_subtitle_refresh_hours_rejected_before_fetch(self):
+        self.config.write_text(self.config.read_text().replace(
+            'fixture = "youtube.json"','fixture = "youtube.json"\nsubtitle_refresh_hours = "24"'))
+        with patch('httpx.get') as fetch:
+            code,out=self.collect();self.assertEqual(code,1,out);fetch.assert_not_called()
+        self.assertFalse(self.db.exists())
+
+    def test_youtube_window_gap_is_warning_not_failure(self):
+        config,_=self.youtube_config();db=self.root/'gap.sqlite3'
+        def item(video_id,title):
+            return {'item_id':video_id,'title':title,'url':'https://www.youtube.com/watch?v='+video_id,
+                    'published_raw':'2026-11-18T00:00:00+09:00','published_at':'2026-11-18T00:00:00+09:00',
+                    'payload':{'summary':''}}
+        with patch('ipo_monitor.youtube.collect',return_value=[item('AAAAAAAAAAA','old')]):
+            code,out=self.call('collect','--config',str(config),'--db',str(db))
+        self.assertEqual(code,0,out)
+        self.assertEqual(self.db_rows(db,'select warning from source_attempts'),[(None,)])
+        with patch('ipo_monitor.youtube.collect',return_value=[item('BBBBBBBBBBB','new')]):
+            code,out=self.call('collect','--config',str(config),'--db',str(db))
+        self.assertEqual(code,0,out)
+        self.assertIn('누락 가능성',out)
+        self.assertEqual(self.db_rows(db,'select status from source_attempts order by id')[1],('success',))
+        self.assertIsNotNone(self.db_rows(db,'select warning from source_attempts order by id')[1][0])
+        with patch('ipo_monitor.youtube.collect',return_value=[item('AAAAAAAAAAA','old')]):
+            code,out=self.call('collect','--config',str(config),'--db',str(db))
+        self.assertEqual(code,0,out)
+        self.assertIsNone(self.db_rows(db,'select warning from source_attempts order by id')[2][0])
+
+    def test_subtitle_timestamp_is_excluded_from_semantic_hash_and_kept_in_attempts(self):
+        config,_=self.youtube_config();db=self.root/'subs.sqlite3'
+        video='Abcdefg1234';payloads=[];seen=[]
+        def item(stamp,text):
+            return {'item_id':video,'title':'가상 영상','url':'https://www.youtube.com/watch?v='+video,
+                    'published_raw':'2026-11-18T00:00:00+09:00','published_at':'2026-11-18T00:00:00+09:00',
+                    'payload':{'summary':'','captions':{'status':'available','language':'ko','segments':[],
+                               'text':text,'metadata_hash':'m','last_checked_at':stamp}}}
+        def fake_gather(source,previous,offline,cfg):
+            seen.append(json.loads(json.dumps(previous)))
+            return [item(*payloads[-1])],None,{}
+        with patch('ipo_monitor.multisource.gather',side_effect=fake_gather):
+            payloads.append(('2026-11-18T10:00:00+09:00','A'))
+            self.assertEqual(self.call('collect','--config',str(config),'--db',str(db))[0],0)
+            payloads.append(('2026-11-18T11:00:00+09:00','A'))
+            self.assertEqual(self.call('collect','--config',str(config),'--db',str(db))[0],0)
+            self.assertEqual(self.db_rows(db,'select count(*) from source_snapshots'),[(1,)])
+            self.assertEqual(seen[-1][video]['captions']['last_checked_at'],'2026-11-18T10:00:00+09:00')
+            payloads.append(('2026-11-18T12:00:00+09:00','B'))
+            self.assertEqual(self.call('collect','--config',str(config),'--db',str(db))[0],0)
+        self.assertEqual(self.db_rows(db,'select count(*) from source_snapshots'),[(2,)])
+        self.assertEqual(seen[-1][video]['captions']['last_checked_at'],'2026-11-18T11:00:00+09:00')
+        metadata=json.loads(self.db_rows(db,'select metadata_json from source_attempts order by id desc limit 1')[0][0])
+        self.assertEqual(metadata['subtitle_checks'][video],'2026-11-18T12:00:00+09:00')
 
     def test_site_current_membership_empty_page_preserves_history(self):
         from ipo_monitor.evidence import build_inputs

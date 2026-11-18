@@ -26,6 +26,20 @@ def table(name='가상기업', value='미정'):
             f'<td>{value}</td><td>1,000원<span>희망</span></td></tr></tbody></table></section>')
 
 
+def changed_header_table(headers=('기업명', '공모가')):
+    cells = ''.join(f'<th>{header}</th>' for header in headers)
+    values = ''.join('<td>미정</td>' for _ in headers[1:])
+    return ('<section aria-label="청약예정 · 수요예측"><h2>청약예정 · 수요예측</h2><table>'
+            f'<thead><tr>{cells}</tr></thead><tbody><tr><th scope="row"><strong>가상기업</strong></th>'
+            f'{values}</tr></tbody></table></section>')
+
+
+def unrelated_table():
+    return ('<section aria-label="공지사항"><h2>공지사항</h2><table>'
+            '<thead><tr><th>제목</th><th>작성일</th></tr></thead>'
+            '<tbody><tr><td>안내</td><td>2026-11-18</td></tr></tbody></table></section>')
+
+
 class SiteParserTests(unittest.TestCase):
     def test_groups_events_and_table_without_rating_inference(self):
         html = page(cell(18, [('subscription', '청약) 가상기업⭐⭐')])
@@ -89,6 +103,29 @@ class SiteParserTests(unittest.TestCase):
         new = parse_site(page(cell(18, [('subscription', '청약) 가상기업⭐⭐')])))[0]
         self.assertEqual(old['item_id'], new['item_id'])
         self.assertNotEqual(old['payload'], new['payload'])
+
+    def test_changed_header_in_recognized_ipo_section_is_error(self):
+        html = page(cell(18, [('subscription', '청약) 가상기업⭐')]), changed_header_table())
+        with self.assertRaises(CollectionError) as raised:
+            parse_site(html)
+        self.assertIn('머리글', str(raised.exception))
+
+    def test_unrelated_table_header_change_does_not_fail(self):
+        html = page(cell(18, [('subscription', '청약) 가상기업⭐')]), unrelated_table())
+        rows = parse_site(html)
+        self.assertEqual([row['item_id'] for row in rows], ['가상기업'])
+
+    def test_mixed_star_and_cross_is_conflict_not_stars(self):
+        event = parse_site(page(cell(18, [('subscription', '청약) 가상기업⭐❌')])))[0]['payload']['events'][0]
+        self.assertEqual(event['raw_marker'], '⭐❌')
+        self.assertIsNone(event['stars'])
+        self.assertTrue(event['marker_conflict'])
+
+    def test_mixed_marker_in_table_is_conflict_not_stars(self):
+        observation = parse_site(page('', table(name='가상기업❌⭐')))[0]['payload']['rating_observations'][0]
+        self.assertEqual(observation['raw_marker'], '❌⭐')
+        self.assertIsNone(observation['stars'])
+        self.assertTrue(observation['marker_conflict'])
 
 
 class SiteFetchTests(unittest.TestCase):

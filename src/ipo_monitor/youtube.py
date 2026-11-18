@@ -1,5 +1,6 @@
 """Channel metadata and Korean subtitles only; no media or AI downloads."""
 
+from datetime import datetime, timedelta
 from hashlib import sha256
 import html
 from pathlib import Path
@@ -9,6 +10,7 @@ import subprocess
 import tempfile
 from urllib.parse import urlsplit, parse_qs
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -16,10 +18,34 @@ from . import CollectionError, published_time
 
 FEED_LIMIT = 2 * 1024 * 1024
 CAPTION_LIMIT = 8 * 1024 * 1024
+DEFAULT_SUBTITLE_REFRESH_HOURS = 24
+MAX_SUBTITLE_REFRESH_HOURS = 24 * 365
 ATOM = '{http://www.w3.org/2005/Atom}'
 YT = '{http://www.youtube.com/xml/schemas/2015}'
 MEDIA = '{http://search.yahoo.com/mrss/}'
 _TIMESTAMP = re.compile(r'(?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3})')
+
+
+def _now():
+    return datetime.now(ZoneInfo('Asia/Seoul'))
+
+
+def _subtitle_due(cached, metadata_hash, hours):
+    """Refresh only after the interval; volatile check time never enters hashes."""
+    if not isinstance(cached, dict) or cached.get('status') != 'available':
+        return True
+    if cached.get('metadata_hash') != metadata_hash:
+        return True
+    stamp = cached.get('last_checked_at')
+    if not isinstance(stamp, str):
+        return True
+    try:
+        checked = datetime.fromisoformat(stamp)
+    except ValueError:
+        return True
+    if checked.tzinfo is None:
+        return True
+    return _now() - checked >= timedelta(hours=hours)
 
 
 def _timestamp(value):
@@ -168,7 +194,9 @@ def collect(source: dict, previous: dict) -> list[dict]:
     """
     maximum = source.get('max_videos', 3)
     refresh = source.get('refresh_subtitles', False)
-    if type(maximum) is not int or not 1 <= maximum <= 50 or type(refresh) is not bool:
+    hours = source.get('subtitle_refresh_hours', DEFAULT_SUBTITLE_REFRESH_HOURS)
+    if (type(maximum) is not int or not 1 <= maximum <= 50 or type(refresh) is not bool
+            or type(hours) not in (int, float) or not 0 <= hours <= MAX_SUBTITLE_REFRESH_HOURS):
         raise CollectionError('youtube_options_invalid')
     raw = _feed(source)
     try:
@@ -203,11 +231,10 @@ def collect(source: dict, previous: dict) -> list[dict]:
         metadata_hash = sha256('\0'.join((title, summary, published, updated)).encode()).hexdigest()
         prior = previous.get(video_id, {})
         cached = prior.get('captions', {}) if isinstance(prior, dict) else {}
-        if (not refresh and isinstance(cached, dict) and cached.get('status') == 'available'
-                and cached.get('metadata_hash') == metadata_hash):
+        if not refresh and not _subtitle_due(cached, metadata_hash, hours):
             captions = cached
         else:
-            captions = _captions(video_id, metadata_hash)
+            captions = {**_captions(video_id, metadata_hash), 'last_checked_at': _now().isoformat()}
         result.append({
             'item_id': video_id, 'title': title,
             'url': 'https://www.youtube.com/watch?v=' + video_id,

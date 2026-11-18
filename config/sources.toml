@@ -17,6 +17,8 @@ channel_id = "UCw8pcmyPWGSik7bjJpeINlA"
 # 최신 영상 N개 자막만 확인. 실행 간 N개 초과 업로드는 누락될 수 있으므로 조정하세요.
 max_videos = 3
 refresh_subtitles = false
+# 자막 재확인 주기(시간). 기본 24시간. 0이면 매 실행 재확인.
+subtitle_refresh_hours = 24
 enabled = true
 
 [[sources]]

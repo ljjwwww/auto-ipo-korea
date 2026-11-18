@@ -12,6 +12,8 @@ SITE_URL = "https://letsgetitstock.com/ipo"
 MAX_BYTES = 2 * 1024 * 1024
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 _HIDDEN = {"script", "style", "noscript", "template"}
+_IPO_SECTION = re.compile(r"(?:청약|수요예측|공모주|공모가|공모일정|상장|기업공개|\bIPO\b)", re.I)
+_IPO_TABLE_HINTS = {"종목명", "공모가", "수요예측", "수요예측 경쟁률", "청약일", "상장일", "주간사"}
 
 
 class _Node:
@@ -67,14 +69,20 @@ class _Page(HTMLParser):
 
 
 def _label(raw):
-    """Keep display markers separate without assigning their meaning."""
+    """Keep display markers separate without assigning their meaning.
+
+    A marker containing both a star and a cross is contradictory, not a score:
+    keep both raw signals, set stars to None and flag the conflict.
+    """
     value = re.sub(r"^(?:청약|상장)\)\s*", "", raw).strip()
     match = re.search(r"((?:⭐\ufe0f?|❌\ufe0f?)+)$", value)
     marker = match.group(1) if match else ""
     name = value[:match.start()].rstrip() if match else value
     if not name:
         raise CollectionError("사이트 파싱 오류: 종목명이 없는 달력 항목입니다.")
-    return name, marker, marker.count("⭐") if "⭐" in marker else None
+    conflict = "⭐" in marker and "❌" in marker
+    stars = None if conflict or "⭐" not in marker else marker.count("⭐")
+    return name, marker, stars, conflict
 
 
 def _event_date(cell):
@@ -121,21 +129,32 @@ def parse_site(html):
                 if not label.closed:
                     raise CollectionError("사이트 파싱 오류: 달력 표기가 잘렸습니다.")
                 raw = label.text()
-                name, marker, stars = _label(raw)
+                name, marker, stars, conflict = _label(raw)
                 event = {"date": _event_date(cell), "kind": kind, "raw_label": raw,
                          "raw_marker": marker, "stars": stars}
+                if conflict:
+                    event["marker_conflict"] = True
                 payload = stock(name)
                 if event not in payload["events"]:
                     payload["events"].append(event)
                     payload["rating_observations"].append(dict(event))
 
     # The site places each IPO table in a section labelled with its display title.
+    # A recognized IPO section whose table headers changed must fail loudly; an
+    # unrelated table elsewhere on the page must not.
     for section in page.root.find("section"):
         heading = next(section.find("h2"), None)
         section_name = section.attrs.get("aria-label") or (heading.text() if heading else "")
+        ipo_section = bool(_IPO_SECTION.search(section_name))
         for table in section.find("table"):
             headers = [node.text() for row in table.find("thead") for node in row.find("th")]
-            if not headers or headers[0] != "종목명":
+            if not headers:
+                if ipo_section:
+                    raise CollectionError("사이트 파싱 오류: 공모주 표 머리글을 찾을 수 없습니다.")
+                continue
+            if headers[0] != "종목명":
+                if ipo_section or _IPO_TABLE_HINTS.intersection(headers):
+                    raise CollectionError("사이트 파싱 오류: 공모주 표 머리글이 변경되었습니다.")
                 continue
             if not table.closed or not section.closed or len(set(headers)) != len(headers):
                 raise CollectionError("사이트 파싱 오류: 공모주 표 구조가 변경되거나 잘렸습니다.")
@@ -150,7 +169,7 @@ def parse_site(html):
                     if strong is None or not strong.text():
                         raise CollectionError("사이트 파싱 오류: 공모주 표의 종목명을 찾을 수 없습니다.")
                     raw_name = strong.text()
-                    name, marker, stars = _label(raw_name)
+                    name, marker, stars, conflict = _label(raw_name)
                     data = {"section": section_name, "raw_name": raw_name,
                             "name_cell": cells[0].text(),
                             "fields": {header: cell.text() for header, cell in zip(headers, cells)}}
@@ -158,8 +177,11 @@ def parse_site(html):
                     if data not in payload["table_rows"]:
                         payload["table_rows"].append(data)
                     if marker:
-                        payload["rating_observations"].append({"kind": "table", "raw_label": raw_name,
-                                                               "raw_marker": marker, "stars": stars})
+                        observation = {"kind": "table", "raw_label": raw_name,
+                                       "raw_marker": marker, "stars": stars}
+                        if conflict:
+                            observation["marker_conflict"] = True
+                        payload["rating_observations"].append(observation)
     if not grouped and not any(re.search(r"(?:일정|종목)(?:이|가)?\s*없", grid.text()) for grid in grids):
         raise CollectionError("사이트 파싱 오류: 빈 달력인지 구조 변경인지 확인할 수 없습니다.")
     for record in grouped.values():

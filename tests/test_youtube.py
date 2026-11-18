@@ -1,9 +1,11 @@
 """Offline channel-feed, subtitle-process and VTT regression tests."""
 
+from datetime import datetime, timedelta
 from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -125,6 +127,14 @@ class YoutubeTests(unittest.TestCase):
             self.call(previous=previous, response=self.response(feed('changed title')))
             captions.assert_called_once()
 
+    def cached(self, hours_ago):
+        with patch('ipo_monitor.youtube._captions', return_value={'status':'available'}) as captions:
+            item = self.call()[0]
+        item['payload']['captions']['metadata_hash'] = captions.call_args.args[1]
+        item['payload']['captions']['last_checked_at'] = (
+            datetime.now(ZoneInfo('Asia/Seoul')) - timedelta(hours=hours_ago)).isoformat()
+        return {VIDEO: item['payload']}
+
     def test_explicit_refresh_refetches(self):
         with patch('ipo_monitor.youtube._captions', return_value={'status':'available'}) as captions:
             first = self.call()
@@ -132,6 +142,27 @@ class YoutubeTests(unittest.TestCase):
         with patch('ipo_monitor.youtube._captions', return_value={'status':'missing'}) as captions:
             self.call(source={**SOURCE, 'refresh_subtitles': True}, previous={VIDEO:first[0]['payload']})
             captions.assert_called_once()
+
+    def test_subtitle_refresh_interval_defaults_to_24_hours(self):
+        with patch('ipo_monitor.youtube._captions') as captions:
+            self.call(previous=self.cached(hours_ago=1))
+            captions.assert_not_called()
+        with patch('ipo_monitor.youtube._captions', return_value={'status':'missing'}) as captions:
+            self.call(previous=self.cached(hours_ago=25))
+            captions.assert_called_once()
+
+    def test_explicit_refresh_overrides_fresh_interval_cache(self):
+        fresh = self.cached(hours_ago=1)
+        with patch('ipo_monitor.youtube._captions', return_value={'status':'missing'}) as captions:
+            self.call(source={**SOURCE, 'refresh_subtitles': True}, previous=fresh)
+            captions.assert_called_once()
+
+    def test_subtitle_refresh_hours_is_validated_before_network(self):
+        for value in (True, -1, '24'):
+            with self.subTest(value=value), patch('ipo_monitor.youtube.httpx.stream') as stream:
+                with self.assertRaises(CollectionError):
+                    collect({**SOURCE, 'subtitle_refresh_hours': value}, {})
+                stream.assert_not_called()
 
     def test_missing_or_error_subtitles_are_retried(self):
         for status in ('missing', 'error'):
@@ -172,7 +203,9 @@ class YoutubeTests(unittest.TestCase):
 
     def test_channel_and_feed_url_are_restricted_before_network(self):
         for source in ({**SOURCE,'channel_id':'invalid'}, {**SOURCE,'url':'https://evil.example/feed'},
-                       {**SOURCE,'url':SOURCE['url']+'&secret=value'}, {**SOURCE,'max_videos':True}):
+                       {**SOURCE,'url':SOURCE['url']+'&secret=value'}, {**SOURCE,'max_videos':True},
+                       {**SOURCE,'subtitle_refresh_hours':True}, {**SOURCE,'subtitle_refresh_hours':-1},
+                       {**SOURCE,'subtitle_refresh_hours':'24'}):
             with self.subTest(source=source),patch('ipo_monitor.youtube.httpx.stream') as stream:
                 with self.assertRaises(CollectionError):
                     collect(source,{})

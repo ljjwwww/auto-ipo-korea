@@ -39,8 +39,16 @@ def connect(path):
       id INTEGER PRIMARY KEY, source_id TEXT NOT NULL REFERENCES tracked_sources(id),
       started_at TEXT NOT NULL, finished_at TEXT NOT NULL, status TEXT NOT NULL,
       error TEXT, item_count INTEGER NOT NULL, new_count INTEGER NOT NULL,
-      changed_count INTEGER NOT NULL, unchanged_count INTEGER NOT NULL);
+      changed_count INTEGER NOT NULL, unchanged_count INTEGER NOT NULL,
+      warning TEXT, metadata_json TEXT);
     ''')
+    # Non-destructive additive migration for databases created before these columns.
+    columns = {row[1] for row in conn.execute('PRAGMA table_info(source_attempts)')}
+    if 'warning' not in columns:
+        conn.execute('ALTER TABLE source_attempts ADD COLUMN warning TEXT')
+    if 'metadata_json' not in columns:
+        conn.execute('ALTER TABLE source_attempts ADD COLUMN metadata_json TEXT')
+    conn.commit()
     return conn
 
 
@@ -68,10 +76,12 @@ def load_sources(path):
                 or not isinstance(source['creator'],str)):
                 raise ValueError
             if source['type']=='youtube':
+                hours = source.get('subtitle_refresh_hours', 24)
                 if (not isinstance(source.get('channel_id'),str)
                     or not re.fullmatch(r'UC[A-Za-z0-9_-]{22}',source['channel_id'])
                     or type(source.get('max_videos',3)) is not int or not 1<=source.get('max_videos',3)<=50
-                    or type(source.get('refresh_subtitles',False)) is not bool):
+                    or type(source.get('refresh_subtitles',False)) is not bool
+                    or type(hours) not in (int,float) or not 0<=hours<=24*365):
                     raise ValueError
             if 'fixture' in source and (not isinstance(source['fixture'],str) or not source['fixture']):
                 raise ValueError
@@ -115,18 +125,35 @@ def rss_items(source,offline,config):
 
 def gather(source,previous,offline,config):
     if source['type']=='rss':
-        return rss_items(source,offline,config)
+        items,posts=rss_items(source,offline,config)
+        return items,posts,{}
     if offline:
         try:
             items=json.loads((config.parent/source['fixture']).read_text(encoding='utf-8'))
         except (OSError,ValueError):
             raise CollectionError('오프라인 fixture 파일을 읽을 수 없습니다.') from None
-        return validate_items(items),None
+        return validate_items(items),None,{}
     if source['type']=='youtube':
         from .youtube import collect
-    else:
-        from .ipo_site import collect
-    return validate_items(collect(source,previous)),None
+        items=validate_items(collect(source,previous))
+        info={}
+        # The latest-N cap is intentional; only report that the entire fetched
+        # newest window is unseen, which can mean uploads were skipped. An empty
+        # baseline is never a gap.
+        if previous and items and not any(item['item_id'] in previous for item in items):
+            info['warning']='최신 영상 창에 이전에 본 영상이 없습니다. 최신 창 밖 업로드 누락 가능성을 확인하세요.'
+        return items,None,info
+    from .ipo_site import collect
+    return validate_items(collect(source,previous)),None,{}
+
+
+def _semantic_payload(payload):
+    """Exclude the volatile subtitle check timestamp from snapshot hashing."""
+    captions=payload.get('captions') if isinstance(payload,dict) else None
+    if isinstance(captions,dict) and 'last_checked_at' in captions:
+        return {**payload,'captions':{key:value for key,value in captions.items()
+                                     if key!='last_checked_at'}}
+    return payload
 
 
 def collect_sources(args):
@@ -154,10 +181,29 @@ def collect_sources(args):
                 rows=conn.execute('''SELECT a.* FROM source_snapshots a WHERE a.source_id=? AND a.id=(
                     SELECT MAX(b.id) FROM source_snapshots b WHERE b.source_id=a.source_id AND b.item_id=a.item_id)''',(s['id'],)).fetchall()
                 previous={r['item_id']:json.loads(r['payload_json']) for r in rows}
+                # Subtitle re-checks are recorded in the attempt metadata, not in a
+                # new snapshot, so the next run knows when each item was last checked.
+                last_meta_row=conn.execute('''SELECT metadata_json FROM source_attempts
+                  WHERE source_id=? ORDER BY id DESC LIMIT 1''',(s['id'],)).fetchone()
+                last_meta={}
+                if last_meta_row and isinstance(last_meta_row[0],str):
+                    try:
+                        last_meta=json.loads(last_meta_row[0])
+                    except ValueError:
+                        last_meta={}
+                checks=last_meta.get('subtitle_checks') if isinstance(last_meta,dict) else None
+                if isinstance(checks,dict):
+                    for item_id,stamp in checks.items():
+                        cached=previous.get(item_id)
+                        if (isinstance(stamp,str) and isinstance(cached,dict)
+                            and isinstance(cached.get('captions'),dict)):
+                            cached['captions']['last_checked_at']=stamp
                 started=now();new=changed=unchanged=0;error=None;status='success';count=0
+                warning=None;items=[]
                 print(terminal_text(f"출처: {s['name']} [{s['id']}]"))
                 try:
-                    items,posts=gather(s,previous,args.offline,args.config);count=len(items)
+                    items,posts,info=gather(s,previous,args.offline,args.config);count=len(items)
+                    warning=info.get('warning') if isinstance(info,dict) else None
                     # Existing blog feeds/posts remain available to all legacy CLI commands.
                     if posts is not None:
                         from . import save_posts
@@ -167,7 +213,10 @@ def collect_sources(args):
                         conn.execute('BEGIN IMMEDIATE')
                         for item in items:
                             payload=json.dumps(item['payload'],ensure_ascii=False,sort_keys=True)
-                            h=digest({k:item.get(k) for k in ('title','url','published_raw','published_at','payload')})
+                            h=digest({'title':item.get('title'),'url':item.get('url'),
+                                      'published_raw':item.get('published_raw'),
+                                      'published_at':item.get('published_at'),
+                                      'payload':_semantic_payload(item['payload'])})
                             last=conn.execute('''SELECT content_hash FROM source_snapshots WHERE source_id=?
                               AND item_id=? ORDER BY id DESC LIMIT 1''',(s['id'],item['item_id'])).fetchone()
                             if last and last[0]==h:
@@ -188,11 +237,23 @@ def collect_sources(args):
                     status='error';error=str(exc)
                 if status!='success':
                     failed+=1;print(terminal_text(f'수집 확인 필요: {error}'))
+                metadata={}
+                checks={item['item_id']:item['payload']['captions']['last_checked_at']
+                        for item in items
+                        if isinstance(item['payload'].get('captions'),dict)
+                        and isinstance(item['payload']['captions'].get('last_checked_at'),str)}
+                if checks:
+                    metadata['subtitle_checks']=checks
+                if warning:
+                    metadata['warning']=warning
                 with conn:
                     conn.execute('''INSERT INTO source_attempts
-                      (source_id,started_at,finished_at,status,error,item_count,new_count,changed_count,unchanged_count)
-                      VALUES (?,?,?,?,?,?,?,?,?)''',(s['id'],started,now(),status,error,count,new,changed,unchanged))
+                      (source_id,started_at,finished_at,status,error,item_count,new_count,changed_count,unchanged_count,warning,metadata_json)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?)''',(s['id'],started,now(),status,error,count,new,changed,unchanged,
+                      warning,json.dumps(metadata,ensure_ascii=False,sort_keys=True) if metadata else None))
                 print(f'관찰: 신규 {new}건, 변경 {changed}건, 동일 {unchanged}건 · {status}')
+                if warning:
+                    print(terminal_text(f'수집 참고: {warning}'))
         print(f'수집 결과: {len(sources)}개 출처, 실패/부분완료 {failed}개')
         return int(bool(failed))
     except CollectionError as exc:
@@ -244,6 +305,8 @@ def query(args):
                     print(terminal_text(f"{s['id']} | {s['name']} | {s['creator']} | {last['status'] if last else '미수집'} | {last['finished_at'] if last else ''}"))
                     if last and last['error']:
                         print(terminal_text(last['error']))
+                    if last and last['warning']:
+                        print(terminal_text(f"참고: {last['warning']}"))
                 return 0
             rows=conn.execute('''SELECT a.*,s.name AS source_name,s.type,s.creator FROM source_snapshots a
               JOIN tracked_sources s ON s.id=a.source_id ORDER BY a.id DESC''').fetchall()
