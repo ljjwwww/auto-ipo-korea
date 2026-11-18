@@ -1,5 +1,6 @@
 """Common per-stock/source model input with immutable observation provenance."""
 import json
+import re
 from pathlib import Path
 import tomllib
 
@@ -8,6 +9,19 @@ from .extraction import digest, plain_text
 from .multisource import text_match
 
 VERSION = 'stock-evidence-v1'
+
+
+def entity_match(text,terms):
+    """Distinguish literal names/particles from embedded substring candidates.
+
+    This is an identity-quality hint, not a semantic participation classifier.
+    Keep uncertain matches in the input/provenance rather than deleting them.
+    """
+    boundary=r'[^A-Za-z0-9가-힣]'
+    particles='이라고|이라는|입니다|이라면|에서는|으로|부터|까지|처럼|보다|에서|은|는|이|가|을|를|과|와|도|의|에|로|만'
+    return any(re.search(r'(?<![A-Za-z0-9가-힣])'+re.escape(term)+
+               r'(?=$|'+boundary+r'|(?:'+particles+r')(?=$|'+boundary+r'))',text,re.I)
+               for term in terms)
 
 
 def stock_groups(path):
@@ -85,6 +99,13 @@ def build_inputs(conn,aliases_path,selected=None):
     rows=conn.execute('''SELECT a.*,s.type,s.creator,s.name AS source_name FROM source_snapshots a
       JOIN tracked_sources s ON s.id=a.source_id WHERE a.id=(SELECT MAX(b.id) FROM source_snapshots b
       WHERE b.source_id=a.source_id AND b.item_id=a.item_id) ORDER BY a.source_id,a.item_id''').fetchall()
+    # Successful full-page membership distinguishes removed site items from history.
+    tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'source_current_catalog' in tables:
+        catalogs={r['source_id']:set(json.loads(r['item_ids_json'])) for r in
+                  conn.execute('SELECT * FROM source_current_catalog')}
+        rows=[r for r in rows if r['type']!='ipo_site' or r['source_id'] not in catalogs
+              or r['item_id'] in catalogs[r['source_id']]]
     # Site display names seed the catalog; explicit aliases map only to one named group.
     owners={term.casefold():name for name,terms in groups.items() for term in terms}
     for r in rows:
@@ -121,6 +142,8 @@ def build_inputs(conn,aliases_path,selected=None):
                 'published_at':row['published_at'],'content':content}
             results.append({'input':analysis_input,'input_hash':digest(analysis_input),
                 'snapshot_id':row['id'],'observed_at':row['observed_at'],
+                'match_quality': 'provided_name' if row['type']=='ipo_site' else
+                    ('literal_entity' if entity_match(content['text'],terms) else 'substring_candidate'),
                 'source_name':row['source_name'],
                 'source_status':last['status'] if last else 'unknown',
                 'source_error':last['error'] if last else None})
@@ -130,5 +153,6 @@ def build_inputs(conn,aliases_path,selected=None):
 def context_hash(entries):
     """Exclude last-check timestamps, include actual revisions and source issues."""
     return digest([{'snapshot_id':e['snapshot_id'],'input_hash':e['input_hash'],
+                    'match_quality':e.get('match_quality'),
                     'source_status':e['source_status'],'source_error':e['source_error']}
                    for e in entries])

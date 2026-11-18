@@ -39,6 +39,10 @@ def ensure_schema(conn):
       version_id INTEGER NOT NULL REFERENCES decision_versions(id),selected_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS decision_transition_current (
       stock TEXT PRIMARY KEY,transition_id INTEGER NOT NULL REFERENCES decision_transitions(id));
+    CREATE TABLE IF NOT EXISTS ollama_usage (
+      id INTEGER PRIMARY KEY,input_hash TEXT NOT NULL,model TEXT NOT NULL,
+      input_tokens INTEGER,output_tokens INTEGER,http_status INTEGER,
+      thinking_used INTEGER,recorded_at TEXT NOT NULL);
     ''')
     # Preserve previously created preview IDs when upgrading an existing DB.
     if not conn.execute('SELECT 1 FROM decision_transitions LIMIT 1').fetchone():
@@ -67,6 +71,7 @@ def validate_response(response,source):
 
 
 class FixtureAnalyzer:
+    origin='fixture'
     def __init__(self,path):
         try:
             self.responses=json.loads(path.read_text(encoding='utf-8'))
@@ -99,33 +104,48 @@ def site_rating(source):
     return (*unique[0],False) if unique else (None,'',False)
 
 
+class AnalysisDeferred(CollectionError):
+    """Input waits in the daily queue; do not persist it as an analysis failure."""
+
+
 def analyze_entries(conn,entries,analyzer):
     signals=[];calls=reused=failures=0
     for entry in entries:
         source=entry['input'];h=entry['input_hash'];key=analyzer.key(h)
+        ambiguous=entry.get('match_quality')=='substring_candidate'
+        if ambiguous:
+            key+=':unconfirmed-entity-v1'
         prior=conn.execute('SELECT * FROM observation_analyses WHERE input_hash=? AND backend_key=?',(h,key)).fetchone()
         if prior and prior['status']=='success':
             response=json.loads(prior['response_json']);status='success';error=None;reused+=1
         else:
-            response=None;error=None;calls+=1
+            response=None;error=None;calls+=1;deferred=False
             try:
+                if ambiguous:
+                    raise CollectionError('analysis_target_ambiguous: 부분 문자열만 일치, 종목 연결 추가 확인 필요')
                 response=analyzer.analyze(h,source)
+            except AnalysisDeferred:
+                deferred=True;calls-=1
+                error="daily_queue_pending"
             except CollectionError as exc:
                 error=str(exc);failures+=1
-            status='error' if error else 'success'
-            conn.execute('''INSERT INTO observation_analyses
+            status='unprocessed' if deferred else ('error' if error else 'success')
+            if not deferred:
+                conn.execute('''INSERT INTO observation_analyses
               (input_hash,backend_key,status,response_json,error,attempts,updated_at)
               VALUES (?,?,?,?,?,1,?) ON CONFLICT(input_hash,backend_key) DO UPDATE SET
               status=excluded.status,response_json=excluded.response_json,error=excluded.error,
               attempts=attempts+1,updated_at=excluded.updated_at''',
               (h,key,status,json.dumps(response,ensure_ascii=False) if response else None,error,now()))
-        analysis_id=conn.execute('SELECT id FROM observation_analyses WHERE input_hash=? AND backend_key=?',(h,key)).fetchone()[0]
+        analysis_row=conn.execute('SELECT id FROM observation_analyses WHERE input_hash=? AND backend_key=?',(h,key)).fetchone()
+        analysis_id=analysis_row[0] if analysis_row and status!='unprocessed' else None
         rating,marker,rating_conflict=site_rating(source) if source['source_type']=='ipo_site' else (None,'',False)
         signal={'stock':source['stock'],'source_id':source['source_id'],'source_type':source['source_type'],
             'creator':source['creator'],'snapshot_id':entry['snapshot_id'],'observed_at':entry['observed_at'],
             'published_at':source['published_at'],'published_raw':source['published_raw'],'url':source['url'],
             'input_hash':h,'analysis_id':analysis_id,'backend_key':key,
             'source_status':entry['source_status'],'source_error':entry['source_error'],
+            'match_quality':entry.get('match_quality','unknown'),
             'opinion':'판단 불가','assessment':'unknown','stage':'unknown','evidence':'','reason':'',
             **(response or {}),'rating':rating,'marker':marker,'rating_conflict':rating_conflict,
             'analysis_status':status,'error':error,'raw_ratings':source['content']['ratings'],'analysis_reason':response['reason'] if response else ''}
@@ -135,18 +155,48 @@ def analyze_entries(conn,entries,analyzer):
     return signals,calls,reused,failures
 
 
-def run_assessment(args):
+def run_assessment(args, analyzer_override=None):
     try:
         if not args.db.is_file():
             raise CollectionError('먼저 출처를 수집하세요.')
         policy=load_policy(args.policy)
-        analyzer=FixtureAnalyzer(args.fixture)
+        if analyzer_override is not None:
+            analyzer=analyzer_override
+        elif args.backend=='fixture':
+            if args.fixture is None:
+                raise CollectionError('fixture_required')
+            analyzer=FixtureAnalyzer(args.fixture)
+        else:
+            if not args.allow_api:
+                raise CollectionError('ollama_requires_allow_api')
+            if not args.stock:
+                raise CollectionError('ollama_requires_explicit_stock')
+            if not args.model or args.fixture is not None:
+                raise CollectionError('ollama_requires_model_and_no_fixture')
+            from .credentials import read_key
+            from .ollama import OllamaAnalyzer
+            analyzer=OllamaAnalyzer(args.model,args.allow_api,args.max_calls,read_key())
         with closing(connect(args.db)) as conn:
             ensure_schema(conn)
             with conn:
                 conn.execute('BEGIN IMMEDIATE')
                 entries=build_inputs(conn,args.aliases,args.stock)
+                if not entries:
+                    raise CollectionError('no_matching_analysis_inputs')
+                if args.backend=='ollama' and not getattr(analyzer,'can_defer',False):
+                    required=sum(not conn.execute('''SELECT 1 FROM observation_analyses
+                      WHERE input_hash=? AND backend_key=? AND status='success' ''',
+                      (e['input_hash'],analyzer.key(e['input_hash']))).fetchone()
+                      for e in entries if e.get('match_quality')!='substring_candidate')
+                    if required>args.max_calls:
+                        raise CollectionError(f'ollama_call_budget_exceeded: 필요한 요청 {required}건 > 설정 {args.max_calls}건. 호출하지 않았습니다.')
                 signals,calls,reused,failures=analyze_entries(conn,entries,analyzer)
+                if args.backend=='ollama':
+                    conn.executemany('''INSERT INTO ollama_usage
+                      (input_hash,model,input_tokens,output_tokens,http_status,thinking_used,recorded_at)
+                      VALUES (?,?,?,?,?,?,?)''',
+                      [(u['input_hash'],u['model'],u['input_tokens'],u['output_tokens'],
+                        u['http_status'],u['thinking_used'],now()) for u in analyzer.usage])
                 stock_names=sorted({s['stock'] for s in signals})
                 decisions_created=previews_created=transitions_created=0
                 for stock in stock_names:
@@ -163,7 +213,7 @@ def run_assessment(args):
                         result['analysis_issues']=[{'source_id':s['source_id'],'error':s['error']} for s in result['contributions'] if s['selected'] and s['analysis_status']!='success']
                         if result['analysis_issues']:
                             result['status']='추가 확인'
-                        result.update({'stock':stock,'is_test':True,'input_context':context,'policy_hash':policy_hash,'policy_snapshot':policy,'engine_version':POLICY_ENGINE})
+                        result.update({'stock':stock,'is_test':True,'analysis_origin':analyzer.origin,'input_context':context,'policy_hash':policy_hash,'policy_snapshot':policy,'engine_version':POLICY_ENGINE})
                         if any(s['rating_conflict'] for s in parts):
                             result['status']='추가 확인';result['rating_conflict']=True
                         cursor=conn.execute('''INSERT INTO decision_versions
@@ -185,9 +235,12 @@ def run_assessment(args):
                     _,created=enqueue(conn,transition_id,stock,result,args.channel,args.destination,is_test=True)
                     previews_created+=created
                     print(terminal_text(f"[테스트] {stock}: {result['status']} | 점수 {result['score']} | 자료커버리지 {result['coverage']}"))
-        print(f'고정 응답 호출 {calls}건 · 재사용 {reused}건 · 분석 실패 {failures}건')
+        print(f"{'고정 응답' if analyzer.origin=='fixture' else 'Ollama 분석'} 호출 {calls}건 · 재사용 {reused}건 · 분석 실패 {failures}건")
         print(f'판단 버전 신규 {decisions_created}건 · 상태 전이 신규 {transitions_created}건 · 미발송 미리보기 신규 {previews_created}건')
-        print('실제 AI/메신저 호출 없음. 고정 응답과 미검증 실험 정책 결과입니다.')
+        if analyzer.origin=='fixture':
+            print('실제 AI/메신저 호출 없음. 고정 응답과 미검증 실험 정책 결과입니다.')
+        else:
+            print(f'실제 Ollama 요청 {analyzer.calls}건. 메신저 전송 없음. 미검증 실험 정책 결과입니다.')
         return int(bool(failures))
     except (CollectionError,ValueError) as exc:
         print(terminal_text(f'분석 준비/검증 실패: {exc}'),file=sys.stderr);return 1

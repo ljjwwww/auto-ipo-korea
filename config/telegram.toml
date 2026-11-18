@@ -1,0 +1,5 @@
+# 토큰/수신 대화 ID는 여기에 넣지 않습니다. telegram setup으로 로컬에 저장합니다.
+[telegram]
+project_root = ".."
+enabled = true
+state_db = "data/telegram-delivery.sqlite3"

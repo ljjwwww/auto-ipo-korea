@@ -32,6 +32,9 @@ def connect(path):
       published_raw TEXT NOT NULL, published_at TEXT, payload_json TEXT NOT NULL,
       content_hash TEXT NOT NULL, observed_at TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS snapshot_item ON source_snapshots(source_id,item_id,id);
+    CREATE TABLE IF NOT EXISTS source_current_catalog (
+      source_id TEXT PRIMARY KEY REFERENCES tracked_sources(id),
+      item_ids_json TEXT NOT NULL, observed_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS source_attempts (
       id INTEGER PRIMARY KEY, source_id TEXT NOT NULL REFERENCES tracked_sources(id),
       started_at TEXT NOT NULL, finished_at TEXT NOT NULL, status TEXT NOT NULL,
@@ -174,6 +177,11 @@ def collect_sources(args):
                               (source_id,item_id,title,url,published_raw,published_at,payload_json,content_hash,observed_at)
                               VALUES (?,?,?,?,?,?,?,?,?)''',
                               (s['id'],item['item_id'],item['title'],item['url'],item['published_raw'],item.get('published_at'),payload,h,now()))
+                        if s['type']=='ipo_site':
+                            conn.execute('''INSERT INTO source_current_catalog VALUES (?,?,?)
+                              ON CONFLICT(source_id) DO UPDATE SET item_ids_json=excluded.item_ids_json,
+                              observed_at=excluded.observed_at''',
+                              (s['id'],json.dumps([item['item_id'] for item in items]),now()))
                         if any(i['payload'].get('captions',{}).get('status') in {'error','missing'} for i in items):
                             status='partial';error='일부 영상의 자막을 확보하지 못했습니다. 다음 실행에서 재시도합니다.'
                 except CollectionError as exc:

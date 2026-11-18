@@ -126,16 +126,41 @@ def terminal_text(value: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "telegram":
+        from .telegram_command import command
+        parser=argparse.ArgumentParser(description="Telegram 개인 연결·요약 미리보기·명시 전송")
+        parser.add_argument("action",choices=["setup","status","preview","catalog","enable","disable","send"])
+        parser.add_argument("--config",type=Path,default=Path("config/telegram.toml"))
+        parser.add_argument("--daily-config",type=Path,default=Path("config/daily.toml"))
+        parser.add_argument("--allow-send",action="store_true")
+        return command(parser.parse_args(argv[1:]))
+    if argv and argv[0] == "daily":
+        from .daily import command
+        parser=argparse.ArgumentParser(description="하루 수집·분석·알림 생성 (Telegram 명시 활성화 시 전송)")
+        parser.add_argument("--config",type=Path,default=Path("config/daily.toml"))
+        parser.add_argument("--allow-api",action="store_true")
+        parser.add_argument("--dry-run",action="store_true",help="네트워크/키 읽기 없이 저장 자료·대기열만 확인")
+        return command(parser.parse_args(argv[1:]))
+    if argv and argv[0] == "credentials":
+        from .credentials import command
+        parser=argparse.ArgumentParser(description="로컬 비밀키 숨김 입력/상태 확인. API 호출 없음")
+        parser.add_argument("action",choices=["set","status"])
+        parser.add_argument("provider",choices=["ollama"])
+        return command(parser.parse_args(argv[1:]))
     if argv and argv[0] in {"evidence-inputs","assess","decisions","notification-preview"}:
         from .assessment import run_assessment,query_assessment
-        parser=argparse.ArgumentParser(description="세 출처 공통 입력·실험 판단·미발송 알림 (고정 응답만)")
+        parser=argparse.ArgumentParser(description="세 출처 분석·실험 판단·미발송 알림 (fixture/Ollama 명시 실행)")
         parser.add_argument("command",choices=["evidence-inputs","assess","decisions","notification-preview"])
         parser.add_argument("--db",type=Path,default=Path("data/ipo-monitor.sqlite3"))
         parser.add_argument("--aliases",type=Path,default=Path("config/stocks.toml"))
         parser.add_argument("--stock",action="append",help="종목명/등록 별칭 (반복 가능)")
         parser.add_argument("--policy",type=Path,default=Path("config/decision.toml"))
         if argv[0]=="assess":
-            parser.add_argument("--fixture",type=Path,required=True)
+            parser.add_argument("--backend",choices=["fixture","ollama"],default="fixture")
+            parser.add_argument("--fixture",type=Path)
+            parser.add_argument("--model",help="Ollama Cloud 모델 ID (자동 선택하지 않음)")
+            parser.add_argument("--allow-api",action="store_true")
+            parser.add_argument("--max-calls",type=int,default=3,help="캐시 제외 실제 요청 상한 (기본3)")
             parser.add_argument("--channel",choices=["telegram","slack"],default="telegram")
             parser.add_argument("--destination",default="preview",help="로컬 미리보기 식별자, 실제 채널 아님")
         else:

@@ -1,0 +1,23 @@
+# Windows 작업 스케줄러가 daily --config <절대경로> --allow-api를 실행합니다.
+# 이 명령의 호출만 일일 원장에 포함됩니다. 수동 assess 호출은 별도입니다.
+[daily]
+workflow = "mention_events"
+event_db = "data/mention-events.sqlite3"
+project_root = ".."
+enabled = true
+backend = "ollama"
+model = "nemotron-3-super"
+offline = false
+sources = "config/sources.toml"
+db = "data/daily.sqlite3"
+ledger = "data/daily-ledger.sqlite3"
+aliases = "config/stocks.toml"
+policy = "config/decision.toml"
+log = "data/logs/daily.jsonl"
+max_calls_per_day = 600
+max_attempts = 3
+retry_hours = 20
+
+# 장시간 실행은 안전하게 다음 실행으로 넘기며 호출 횟수 한도를 바꾸지 않습니다.
+max_runtime_minutes = 20
+telegram_config = "config/telegram.toml"

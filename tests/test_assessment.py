@@ -159,3 +159,26 @@ class AssessmentTests(unittest.TestCase):
             p.write_text(json.dumps(values))
             code,out=self.assess();self.assertEqual(code,1,out)
             self.assertIn('분석 실패 1건',out)
+
+    def test_embedded_name_is_preserved_as_unconfirmed_not_scored(self):
+        p=self.sample/'youtube.json';items=json.loads(p.read_text())
+        items[0]['title']='다른 회사 이야기'
+        items[0]['payload']['captions']['text']='가상기업아의 소식입니다.'
+        items[0]['payload']['captions']['segments']=[{'start':'00:00:00.000','end':'00:00:01.000','text':'가상기업아의 소식입니다.'}]
+        p.write_text(json.dumps(items))
+        self.call('collect','--offline','--config',str(self.sample/'sources.toml'),'--db',str(self.db))
+        code,out=self.assess();self.assertEqual(code,1,out)
+        with connect(self.db) as c:
+            entries=build_inputs(c,self.sample/'stocks.toml',['가상기업'])
+        ambiguous=[e for e in entries if e['input']['source_type']=='youtube']
+        self.assertEqual(ambiguous[0]['match_quality'],'substring_candidate')
+        result=json.loads(self.rows("select result_json from decision_versions where stock='가상기업' order by id desc limit 1")[0][0])
+        self.assertEqual(result['status'],'추가 확인')
+        self.assertIn('analysis_target_ambiguous',result['analysis_issues'][0]['error'])
+
+    def test_literal_entity_with_particles_and_nonmatching_prefix(self):
+        from ipo_monitor.evidence import entity_match
+        self.assertTrue(entity_match('엠비디는 청약을 검토한다.',['엠비디']))
+        self.assertTrue(entity_match('엠비디 청약',['엠비디']))
+        self.assertFalse(entity_match('엠비디아발 걱정',['엠비디']))
+        self.assertFalse(entity_match('영광와이케이엠씨',['영광']))

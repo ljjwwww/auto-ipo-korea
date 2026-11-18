@@ -117,3 +117,15 @@ class MultiSourceTests(unittest.TestCase):
         p=self.config.parent/'youtube.json';items=json.loads(p.read_text())
         items[0]['payload']['captions']=None;p.write_text(json.dumps(items))
         code,out=self.collect();self.assertEqual(code,1,out)
+
+    def test_site_current_membership_empty_page_preserves_history(self):
+        from ipo_monitor.evidence import build_inputs
+        from ipo_monitor.multisource import connect
+        self.collect()
+        (self.config.parent/'site.json').write_text('[]')
+        self.collect()
+        with connect(self.db) as conn:
+            entries=build_inputs(conn,self.root/'nonexistent-aliases.toml')
+            self.assertEqual(entries,[])
+            self.assertEqual(conn.execute("select count(*) from source_snapshots where source_id='demo-site'").fetchone()[0],1)
+            self.assertEqual(conn.execute("select item_ids_json from source_current_catalog where source_id='demo-site'").fetchone()[0],'[]')

@@ -41,7 +41,9 @@ def render_message(stock, decision, *, is_test=True):
         raise CollectionError('preview_contributions_invalid')
     lines = [
         f'[테스트/미발송] {_text(stock)}',
-        '고정 응답 기반 실험 결과입니다. 실제 AI 분석·메시지 전송이 아닙니다.',
+        ('Ollama 실제 분석을 이용한 실험 판단 미리보기입니다. 메시지 전송은 하지 않았습니다.'
+         if decision.get('analysis_origin')=='ollama' else
+         '고정 응답 기반 실험 결과입니다. 실제 AI 분석·메시지 전송이 아닙니다.'),
         f"검토 상태: {_text(decision.get('status', '판단 대기'))}",
         f"실험 점수: {'미정' if score is None else f'{score:.3f}'} | 작성자별 신호 커버리지: {coverage:.0%}",
         f"출처 간 상충: {'있음' if decision.get('conflict') else '없음'}",
