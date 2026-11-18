@@ -36,7 +36,7 @@ def load_config(path):
                 raise ValueError
         if config.get('backend') not in {'fixture', 'ollama'}:
             raise ValueError
-        for field, maximum in [('max_calls_per_day', 600), ('max_attempts', 10), ('retry_hours', 168)]:
+        for field, maximum in [('max_calls_per_day', 1200), ('max_attempts', 10), ('retry_hours', 168)]:
             if type(config.get(field)) is not int or not 1 <= config[field] <= maximum:
                 raise ValueError
         if not isinstance(config.get('model'), str) or not config['model'].strip():

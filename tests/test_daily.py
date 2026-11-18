@@ -212,16 +212,16 @@ retry_hours = 20
             self.assertEqual(tuple(rows[0]),(111,22,200,'completed'))
             self.assertEqual(tuple(rows[1]),(None,None,None,'failed'))
 
-    def test_600_limit_supported_and_601_rejected(self):
+    def test_1200_limit_supported_and_1201_rejected(self):
         from ipo_monitor.daily import load_config
         from ipo_monitor import CollectionError
-        self.config.write_text(self.config.read_text().replace('max_calls_per_day = 6','max_calls_per_day = 600'))
-        self.assertEqual(load_config(self.config)['max_calls_per_day'],600)
+        self.config.write_text(self.config.read_text().replace('max_calls_per_day = 6','max_calls_per_day = 1200'))
+        self.assertEqual(load_config(self.config)['max_calls_per_day'],1200)
         code,out=self.call()
         self.assertEqual(code,0,out)
         self.assertEqual(self.summary(out)['requests'],9)
-        self.assertEqual(self.summary(out)['remaining'],591)
-        self.config.write_text(self.config.read_text().replace('max_calls_per_day = 600','max_calls_per_day = 601'))
+        self.assertEqual(self.summary(out)['remaining'],1191)
+        self.config.write_text(self.config.read_text().replace('max_calls_per_day = 1200','max_calls_per_day = 1201'))
         with self.assertRaises(CollectionError):load_config(self.config)
 
     def test_runtime_deadline_defers_without_request_or_key(self):

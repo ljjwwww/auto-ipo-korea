@@ -6,7 +6,7 @@ event_db = "data/mention-events.sqlite3"
 project_root = ".."
 enabled = true
 backend = "ollama"
-model = "nemotron-3-super"
+model = "nemotron-3-ultra"
 offline = false
 sources = "config/sources.toml"
 db = "data/daily.sqlite3"
@@ -14,9 +14,9 @@ ledger = "data/daily-ledger.sqlite3"
 aliases = "config/stocks.toml"
 policy = "config/decision.toml"
 log = "data/logs/daily.jsonl"
-max_calls_per_day = 600
+max_calls_per_day = 1200
 max_attempts = 3
-retry_hours = 20
+retry_hours = 2
 
 # 장시간 실행은 안전하게 다음 실행으로 넘기며 호출 횟수 한도를 바꾸지 않습니다.
 max_runtime_minutes = 20

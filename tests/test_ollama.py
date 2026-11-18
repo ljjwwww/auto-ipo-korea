@@ -30,7 +30,7 @@ class OllamaTests(unittest.TestCase):
         bad = [('', True, 2, SECRET), ('model\nsecret', True, 2, SECRET),
                ('model', False, 2, SECRET), ('model', 1, 2, SECRET),
                ('model', True, 0, SECRET), ('model', True, True, SECRET),
-               ('model', True, 601, SECRET), ('model', True, 1, ''),
+               ('model', True, 1201, SECRET), ('model', True, 1, ''),
                ('model', True, 1, 'secret\nheader'), ('model', True, 1, ' 비밀 ')]
         with patch('ipo_monitor.ollama.httpx.post') as post:
             for args in bad:
@@ -63,9 +63,9 @@ class OllamaTests(unittest.TestCase):
         self.assertEqual(backend.origin, 'ollama')
         self.assertEqual(backend.calls, 1)
 
-    def test_explicit_600_request_budget_is_supported_without_dispatch(self):
-        client=analyzer(max_calls=600)
-        self.assertEqual(client.max_calls,600)
+    def test_explicit_1200_request_budget_is_supported_without_dispatch(self):
+        client=analyzer(max_calls=1200)
+        self.assertEqual(client.max_calls,1200)
         self.assertEqual(client.calls,0)
 
     def test_cache_identity_is_provider_model_and_prompt_bound_not_key_or_input(self):

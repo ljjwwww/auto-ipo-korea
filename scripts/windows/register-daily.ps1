@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$LinuxUser,
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ProjectPath,
     [ValidatePattern('^([01][0-9]|2[0-3]):[0-5][0-9]$')][string]$At = '19:00',
+    [ValidatePattern('^([01][0-9]|2[0-3]):[0-5][0-9]$')][string]$HourlyFrom,
+    [ValidatePattern('^([01][0-9]|2[0-3]):[0-5][0-9]$')][string]$HourlyTo,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')][string]$TaskName = 'AutoIpoKorea-Daily',
     [switch]$AllowApi,
     [ValidateRange(1,60)][int]$TestAfterMinutes,
@@ -21,6 +23,11 @@ foreach ($value in @($Distribution, $LinuxUser, $ProjectPath)) {
 if ($Distribution.StartsWith('-') -or $LinuxUser.StartsWith('-') -or
     -not $ProjectPath.StartsWith('/') -or $ProjectPath -eq '/') { throw 'Invalid scheduler parameter.' }
 $ProjectPath = $ProjectPath.TrimEnd('/')
+if ($PSBoundParameters.ContainsKey('HourlyFrom') -ne $PSBoundParameters.ContainsKey('HourlyTo')) { throw 'HourlyFrom and HourlyTo must be given together.' }
+if ($PSBoundParameters.ContainsKey('HourlyFrom')) {
+    if ($PSBoundParameters.ContainsKey('At')) { throw 'Hourly window replaces At.' }
+    if ($HourlyFrom -ge $HourlyTo) { throw 'Hourly window must be ascending within one day.' }
+}
 function Join-NativeArguments([string[]]$Tokens) {
     return (($Tokens | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
 }
@@ -88,15 +95,27 @@ if ($PSBoundParameters.ContainsKey('TestAt')) { throw 'TestAt requires TestOnly.
 $sourceRunner = Join-Path $PSScriptRoot 'run-daily.ps1'
 if (-not (Test-Path -LiteralPath $sourceRunner -PathType Leaf)) { throw 'Launcher source is missing.' }
 $action = New-ScheduledTaskAction -Execute $executable -Argument $arguments
-$time = [datetime]::Today.AddHours([int]$At.Substring(0,2)).AddMinutes([int]$At.Substring(3,2))
-$trigger = New-ScheduledTaskTrigger -Daily -At $time
+function New-RolledDailyTrigger([int]$Hour, [int]$Minute) {
+    # Past boundaries roll to tomorrow so StartWhenAvailable cannot fire a
+    # catch-up run during registration. Daily recurrence keeps the clock time.
+    $time = [datetime]::Today.AddHours($Hour).AddMinutes($Minute)
+    if ($time -lt (Get-Date)) { $time = $time.AddDays(1) }
+    return New-ScheduledTaskTrigger -Daily -At $time
+}
+if ($PSBoundParameters.ContainsKey('HourlyFrom')) {
+    $triggers = @([int]$HourlyFrom.Substring(0,2)..[int]$HourlyTo.Substring(0,2) | ForEach-Object { New-RolledDailyTrigger $_ 0 })
+    $scheduleLabel = "Hourly $HourlyFrom-$HourlyTo ($($triggers.Count) runs daily)"
+} else {
+    $triggers = @(New-RolledDailyTrigger ([int]$At.Substring(0,2)) ([int]$At.Substring(3,2)))
+    $scheduleLabel = "Daily $At"
+}
 $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Priority 4
-Write-Output "Daily $At Windows-local time; time zone: $((Get-TimeZone).Id); API: $($AllowApi.IsPresent)"
+Write-Output "$scheduleLabel Windows-local time; time zone: $((Get-TimeZone).Id); API: $($AllowApi.IsPresent)"
 if ($PSCmdlet.ShouldProcess("\$TaskName", 'Install logged launcher and register verified daily task')) {
     New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
     Copy-Item -LiteralPath $sourceRunner -Destination $runner -Force
-    $definition = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $marker
+    $definition = New-ScheduledTask -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Description $marker
     # Replacement is allowed only after exact managed-action/user validation above.
     if ($existing.Count -eq 1) {
         Register-ScheduledTask -TaskName $TaskName -TaskPath '\' -InputObject $definition -Force | Out-Null
