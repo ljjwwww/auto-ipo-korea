@@ -16,6 +16,7 @@ import re
 from . import CollectionError, terminal_text
 from .assessment import validate_response
 from .evidence import entity_match
+from .event_reasons import validate_reason_code
 from .ollama import evidence_choices
 
 REASON_LIMIT = 180
@@ -146,7 +147,13 @@ def _check_opinion(response, evidence):
 
 def validate_event_response(response, source):
     """Generic validation plus event-specific quote/number/date grounding."""
-    validate_response(response, source)
+    if isinstance(response, dict) and 'reason_code' in response:
+        validate_response({key: value for key, value in response.items()
+                           if key != 'reason_code'}, source)
+        validate_reason_code(response['reason_code'], response['opinion'])
+    else:
+        # Historical events and offline fixtures retain the original five keys.
+        validate_response(response, source)
     text = source['content']['text']
     if response['evidence'] not in evidence_choices(source):
         raise CollectionError('event_evidence_not_choice')

@@ -33,6 +33,12 @@ def ensure_schema(conn):
         '''CREATE TABLE IF NOT EXISTS mention_catalog (
             month TEXT NOT NULL, stock TEXT NOT NULL, payload_json TEXT NOT NULL,
             PRIMARY KEY(month,stock))''',
+        '''CREATE TABLE IF NOT EXISTS mention_analysis_attempts (
+            id INTEGER PRIMARY KEY,event_id INTEGER NOT NULL,input_hash TEXT NOT NULL,
+            backend_key TEXT NOT NULL,model TEXT NOT NULL,reason_code INTEGER,
+            reason_text TEXT,response_text TEXT,error_code TEXT,created_at TEXT NOT NULL)''',
+        '''CREATE INDEX IF NOT EXISTS mention_analysis_attempts_event
+            ON mention_analysis_attempts(event_id,id)''',
         'CREATE INDEX IF NOT EXISTS mention_events_pending ON mention_events(analysis_status,id)',
     ]
     for statement in statements:

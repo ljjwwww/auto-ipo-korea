@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from ipo_monitor.daily_state import DailyLedger
+from ipo_monitor.event_reasons import Attempt, save_attempt
 from ipo_monitor.mention_delivery import _schema
 from ipo_monitor.mentions import ensure_schema
 from ipo_monitor.multisource import connect
@@ -96,6 +97,35 @@ retry_hours=20
             self.assertEqual(conn.execute("SELECT action FROM mention_event_actions").fetchall(), [("retry-delivery",)])
         with closing(sqlite3.connect(self.data / "ledger.sqlite3")) as conn:
             self.assertEqual(conn.execute("SELECT count(*) FROM daily_runs").fetchone()[0], 1)
+
+    def test_legacy_reason_is_visible_without_fabricating_code_or_model(self):
+        self.populate()
+        with closing(sqlite3.connect(self.data / "events.sqlite3")) as conn, conn:
+            conn.execute("DROP TABLE mention_analysis_attempts")
+            old = {"opinion": "판단 불가", "assessment": "unknown", "stage": "unknown",
+                   "evidence": "과거 관찰", "reason": "명시적 의견이 없었습니다."}
+            conn.execute("""UPDATE mention_events SET analysis_status='success',
+                analysis_json=?,error_code=NULL WHERE id=1""", (json.dumps(old),))
+        result = self.call("events")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        reason = json.loads(result.stdout)["events"][0]["decision_reason"]
+        self.assertEqual(reason, {"code": None, "label": None, "model": None,
+                                 "text": "명시적 의견이 없었습니다.",
+                                 "validated": True, "error_code": None})
+
+    def test_events_keep_earlier_hold_reason_after_later_model_decision(self):
+        self.populate()
+        with closing(sqlite3.connect(self.data / "events.sqlite3")) as conn, conn:
+            for model, code, text in [('first-model', 2, '조건 확인 필요'),
+                                      ('next-model', 0, '참여하지 않겠다는 의견')]:
+                raw = json.dumps({'reason_code': code, 'reason': text}, ensure_ascii=False)
+                save_attempt(conn, Attempt(1, 'input', model, model, raw, None))
+        result = self.call("events")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        event = json.loads(result.stdout)["events"][0]
+        self.assertEqual([r["code"] for r in event["reason_history"]], [2, 0])
+        self.assertEqual(event["decision_reason"]["model"], "next-model")
+        self.assertNotIn("response_text", result.stdout)
 
     def test_close_and_analysis_retry_are_individual_audited_actions(self):
         self.populate()

@@ -65,7 +65,7 @@ telegram_config="telegram.toml"
             self.assertEqual(first['discovery']['catalog'],3)
             post=self.root/'sample/blog.xml'
             post.write_text(post.read_text().replace('가상기업은 청약에 참여하겠습니다.','가상기업은 청약에 참여하겠습니다. 새 의견입니다.'))
-            with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',side_effect=response):
+            with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',side_effect=response):
                 code,out=self.call();self.assertEqual(code,0,out)
                 second=self.summary(out);self.assertEqual(second['discovery']['queued'],1)
                 self.assertEqual(second['requests'],1)
@@ -105,7 +105,8 @@ telegram_config="telegram.toml"
             if url.startswith('https://ollama.com/'):
                 result={'opinion':'참여','assessment':'positive','stage':'planned',
                         'evidence':'가상기업은 청약에 참여하겠습니다.',
-                        'reason':'블로거가 이 종목 청약에 참여하겠다는 새 의견을 밝혔습니다.'}
+                        'reason':'블로거가 이 종목 청약에 참여하겠다는 새 의견을 밝혔습니다.',
+                        'reason_code':0}
                 payload={'done':True,'done_reason':'stop','message':{'role':'assistant','content':json.dumps(result)},'prompt_eval_count':100,'eval_count':50}
                 calls.append('AI')
             elif url.startswith('https://api.telegram.org/'):
@@ -126,6 +127,14 @@ telegram_config="telegram.toml"
             self.assertEqual(calls,['AI','Telegram'])
             self.assertEqual(self.summary(out)['requests'],0)
             self.assertEqual(self.summary(out)['telegram']['sent'],0)
+            view=io.StringIO()
+            with redirect_stdout(view):
+                code=main(['events','--config',str(self.config)])
+            self.assertEqual(code,0,view.getvalue())
+            saved=json.loads(view.getvalue())['events'][0]['decision_reason']
+            self.assertEqual((saved['code'],saved['model'],saved['validated']),
+                             (0,'fixture-model',True))
+            self.assertEqual(saved['text'],'블로거가 이 종목 청약에 참여하겠다는 새 의견을 밝혔습니다.')
 
     def _insert_pending_event(self,stock):
         source={'stock':stock,'aliases':[stock],'source_id':'manual','source_type':'rss',
@@ -149,8 +158,9 @@ telegram_config="telegram.toml"
         post.write_text(post.read_text().replace('가상기업은 청약에 참여하겠습니다.',
                                                  '가상기업은 청약에 참여하겠습니다. 새 의견입니다.'))
         fabricated={'opinion':'참여','assessment':'positive','stage':'planned',
-                    'evidence':'새 의견입니다.','reason':'청약 참여 의견을 밝혔습니다.'}
-        with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',return_value=fabricated):
+                    'evidence':'새 의견입니다.','reason':'청약 참여 의견을 밝혔습니다.',
+                    'reason_code':0}
+        with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',return_value=fabricated):
             code,out=self.call();self.assertEqual(code,1,out)
         summary=self.summary(out)
         self.assertEqual(summary['phase'],'analysis')
@@ -162,11 +172,18 @@ telegram_config="telegram.toml"
                              ('error','event_evidence_not_choice'))
             self.assertIsNone(conn.execute('SELECT analysis_json FROM mention_events').fetchone()[0])
             self.assertEqual(conn.execute('SELECT count(*) FROM mention_analysis_cache').fetchone()[0],0)
-        with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',
+            self.assertEqual(conn.execute("""SELECT reason_code,reason_text,error_code
+                FROM mention_analysis_attempts""").fetchone(),
+                (0,'청약 참여 의견을 밝혔습니다.','event_evidence_not_choice'))
+            raw=conn.execute('SELECT response_text FROM mention_analysis_attempts').fetchone()[0]
+            self.assertEqual(json.loads(raw),fabricated)
+        with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',
                    side_effect=AssertionError('same-day retry must wait for cooldown')):
             code,out=self.call();self.assertEqual(code,0,out)
         summary=self.summary(out)
         self.assertEqual(summary['cooldown'],1);self.assertEqual(summary['requests'],0)
+        with sqlite3.connect(self.root/'events.sqlite3') as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM mention_analysis_attempts').fetchone()[0],1)
 
     def test_cached_invalid_response_is_dropped_without_crashing_the_run(self):
         self.call()
@@ -175,7 +192,7 @@ telegram_config="telegram.toml"
                                                  '가상기업은 청약에 참여하겠습니다. 새 의견입니다.'))
         valid={'opinion':'참여','assessment':'positive','stage':'planned',
                'evidence':'가상기업은 청약에 참여하겠습니다.','reason':'새 글에서 청약 참여 의견을 밝혔습니다.'}
-        with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',return_value=valid):
+        with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',return_value=valid):
             code,out=self.call();self.assertEqual(code,0,out)
         with sqlite3.connect(self.root/'events.sqlite3') as conn:
             key=conn.execute('SELECT backend_key FROM mention_analysis_cache').fetchone()[0]
@@ -184,7 +201,7 @@ telegram_config="telegram.toml"
                            ensure_ascii=False)
             conn.execute('UPDATE mention_analysis_cache SET response_json=? WHERE backend_key=?',(bad,key))
             conn.execute("UPDATE mention_events SET analysis_status='pending',analysis_json=NULL")
-        with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',
+        with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',
                    side_effect=AssertionError('invalid cache must not be reused')):
             code,out=self.call();self.assertEqual(code,1,out)
         self.assertEqual(self.summary(out)['analysis_error_codes'],{'event_evidence_not_choice':1})
@@ -228,9 +245,9 @@ telegram_config="telegram.toml"
                                                  '가상기업은 청약에 참여하겠습니다. 새 의견입니다.'))
         fabricated={'opinion':'참여','assessment':'positive','stage':'planned',
                     'evidence':'새 의견입니다.','reason':'청약 참여 의견을 밝혔습니다.'}
-        with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',return_value=fabricated):
+        with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',return_value=fabricated):
             code,out=self.call();self.assertEqual(code,1,out)
-        with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',
+        with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',
                    side_effect=AssertionError('exhausted attempt must not call')):
             code,out=self.call();self.assertEqual(code,0,out)
         summary=self.summary(out)
@@ -241,7 +258,7 @@ telegram_config="telegram.toml"
             conn.execute("INSERT INTO mention_event_controls VALUES (1,0,'2026-11-17T19:00:01+09:00')")
         valid={'opinion':'참여','assessment':'positive','stage':'planned',
                'evidence':'가상기업은 청약에 참여하겠습니다.','reason':'새 글에서 청약 참여 의견을 밝혔습니다.'}
-        with patch('ipo_monitor.mention_workflow.FixtureAnalyzer.analyze',return_value=valid):
+        with patch('ipo_monitor.mention_workflow.EventFixtureAnalyzer.analyze',return_value=valid):
             code,out=self.call();self.assertEqual(code,0,out)
         summary=self.summary(out)
         self.assertEqual(summary['requests'],1)

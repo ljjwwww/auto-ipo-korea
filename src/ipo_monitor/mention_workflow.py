@@ -12,12 +12,14 @@ from . import CollectionError
 from .assessment import AnalysisDeferred, FixtureAnalyzer
 from .daily_state import DailyLedger, file_lock
 from .event_validation import validate_event_response
+from .event_reasons import Attempt, REASON_INSTRUCTIONS, save_attempt, validate_reason_code
 from .extraction import digest
 from .multisource import collect_sources, connect
-from .ollama import INSTRUCTIONS, VERSION, OllamaAnalyzer, request_settings
+from .ollama import INSTRUCTIONS, RESPONSE_SCHEMA, VERSION, OllamaAnalyzer, request_settings
 
-EVENT_VERSION='event-summary-v2'
-EVENT_INSTRUCTIONS=INSTRUCTIONS+'''
+EVENT_VERSION='event-summary-v3-reasons'
+EVENT_SCHEMA=RESPONSE_SCHEMA[:-1]+',\n "reason_code":"0~4 중 정수"}'
+EVENT_INSTRUCTIONS=INSTRUCTIONS.replace(RESPONSE_SCHEMA,EVENT_SCHEMA)+'''
 추가 작업: reason 필드는 이 새 글/영상이 해당 종목에 관해 전달하는 핵심을 한국어 한 문장,
 180자 이내로 요약한다. 개인 청약 의사만 반복하지 말고 원문에 있는 일정·공모가·수요예측·
 평가 변화·참여 의견 중 실제로 언급된 핵심을 요약한다. 없는 숫자·날짜·추천을 만들지 않는다.
@@ -28,7 +30,7 @@ reason에 쓴 공모가·경쟁률·퍼센트·일정은 evidence 또는 원문 
 복사한다. 선택지에 없거나 종목이 없는 구절, 직접 만든 인용은 허용되지 않는다.
 참여 의사가 불명확하면 opinion은 판단 불가로 두되 원문에 있는 사실은 reason에 요약한다.
 자막/설명 없이 제목만 있으면 제목에서 언급됨과 상세 내용 미확보를 분명히 밝힌다.
-'''
+'''+REASON_INSTRUCTIONS
 
 
 class EventAnalyzer(OllamaAnalyzer):
@@ -38,6 +40,19 @@ class EventAnalyzer(OllamaAnalyzer):
 
     def key(self,input_hash):
         return f'ollama:{VERSION}:{EVENT_VERSION}:{self.model}:{digest(self._settings)}'
+
+    def _validate_response(self,response,source):
+        if not isinstance(response,dict):
+            raise CollectionError('analysis_schema_invalid')
+        validate_reason_code(response.get('reason_code'),response.get('opinion'))
+        return validate_event_response(response,source)
+
+
+class EventFixtureAnalyzer(FixtureAnalyzer):
+    def analyze(self,input_hash,source):
+        if input_hash not in self.responses:
+            raise CollectionError('analysis_fixture_missing')
+        return validate_event_response(self.responses[input_hash],source)
 
 
 def event_cache_key(model):
@@ -105,7 +120,7 @@ def analyze_pending(config,state,ledger,run_id,day):
         input_hash TEXT NOT NULL,backend_key TEXT NOT NULL,response_json TEXT NOT NULL,
         PRIMARY KEY(input_hash,backend_key))''');state.commit()
     rows=state.execute("SELECT * FROM mention_events WHERE analysis_status!='success' ORDER BY id").fetchall()
-    fixture=FixtureAnalyzer(config['fixture']) if config['backend']=='fixture' else None
+    fixture=EventFixtureAnalyzer(config['fixture']) if config['backend']=='fixture' else None
     key_for=lambda h: event_cache_key(config['model']) if fixture is None else fixture.key(h)
     active={}
     for item in state.execute('SELECT stock,payload_json FROM mention_catalog WHERE month=?',(day[:7],)):
@@ -121,8 +136,7 @@ def analyze_pending(config,state,ledger,run_id,day):
     reused=errors=0;error_codes={}
     def failed_event(row,code):
         nonlocal errors
-        with state:
-            state.execute("UPDATE mention_events SET analysis_status='error',attempts=attempts+1,error_code=? WHERE id=?",(code,row['id']))
+        state.execute("UPDATE mention_events SET analysis_status='error',attempts=attempts+1,error_code=? WHERE id=?",(code,row['id']))
         errors+=1;error_codes[code]=error_codes.get(code,0)+1
     ready=[]
     for row in rows:
@@ -137,7 +151,7 @@ def analyze_pending(config,state,ledger,run_id,day):
                 # Never promote an invalid cached summary; drop it so a later run can retry.
                 with state:
                     state.execute('DELETE FROM mention_analysis_cache WHERE input_hash=? AND backend_key=?',(row['input_hash'],key))
-                failed_event(row,_safe_code(exc,'event_cached_invalid'))
+                    failed_event(row,_safe_code(exc,'event_cached_invalid'))
                 continue
             with state:
                 state.execute("UPDATE mention_events SET analysis_status='success',analysis_json=?,analysis_origin=?,error_code=NULL WHERE id=?",(cached[0],config['backend'],row['id']))
@@ -155,19 +169,27 @@ def analyze_pending(config,state,ledger,run_id,day):
                 secret=read_key()
             analyzer.delegate=EventAnalyzer(config['model'],True,config['max_calls_per_day'],secret)
         else:
-            analyzer.delegate=FixtureAnalyzer(config['fixture'])
+            analyzer.delegate=EventFixtureAnalyzer(config['fixture'])
         for row in selected:
             source=json.loads(row['input_json'])
+            response=None;error=None
             try:
                 response=analyzer.analyze(row['input_hash'],source)
                 response=validate_event_response(response,source)
             except AnalysisDeferred:
                 break
             except (CollectionError,ValueError,KeyError,TypeError) as exc:
-                failed_event(row,_safe_code(exc,'mention_analysis_failed'))
-            else:
-                encoded=json.dumps(response,ensure_ascii=False)
-                with state:
+                error=_safe_code(exc,'mention_analysis_failed')
+            raw=getattr(analyzer.delegate,'last_response_text',None)
+            if raw is None and response is not None:
+                raw=json.dumps(response,ensure_ascii=False)
+            with state:
+                save_attempt(state,Attempt(row['id'],row['input_hash'],key_for(row['input_hash']),
+                                           config['model'],raw,error))
+                if error:
+                    failed_event(row,error)
+                else:
+                    encoded=json.dumps(response,ensure_ascii=False)
                     state.execute("UPDATE mention_events SET analysis_status='success',attempts=attempts+1,analysis_json=?,analysis_origin=?,error_code=NULL WHERE id=?",(encoded,config['backend'],row['id']))
                     state.execute('INSERT OR REPLACE INTO mention_analysis_cache VALUES (?,?,?)',(row['input_hash'],key_for(row['input_hash']),encoded))
     return {'requests':analyzer.calls,'reused':reused,'analysis_errors':errors,

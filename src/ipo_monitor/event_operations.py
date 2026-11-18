@@ -7,6 +7,7 @@ from typing import Literal
 
 from . import CollectionError
 from .daily_state import file_lock
+from .event_reasons import ReasonCode
 
 Action = Literal["close", "reopen", "retry-analysis", "retry-delivery", "mark-sent"]
 
@@ -29,6 +30,17 @@ def list_events(config, today: date):
         catalog = {row["stock"]: json.loads(row["payload_json"]) for row in conn.execute(
             "SELECT stock,payload_json FROM mention_catalog WHERE month=?", (today.strftime("%Y-%m"),))}
         records = []
+        histories = {}
+        if "mention_analysis_attempts" in tables:
+            for attempt in conn.execute("""SELECT event_id,reason_code,reason_text,model,error_code,created_at
+                    FROM mention_analysis_attempts ORDER BY id"""):
+                code = attempt["reason_code"]
+                histories.setdefault(attempt["event_id"], []).append({
+                    "code": code, "label": ReasonCode(code).label if code is not None else None,
+                    "text": attempt["reason_text"], "model": attempt["model"],
+                    "validated": attempt["error_code"] is None,
+                    "error_code": attempt["error_code"], "created_at": attempt["created_at"],
+                })
         for row in conn.execute("SELECT * FROM mention_events ORDER BY id"):
             end = catalog.get(row["stock"], {}).get("end")
             remembered_end = row["catalog_end"] if "catalog_end" in row.keys() else None
@@ -44,10 +56,21 @@ def list_events(config, today: date):
                 states = {receipt["state"] for receipt in receipts}
                 state = ("delivery_unknown" if states & {"unknown", "sending"} else
                          "delivery_failed" if "failed" in states else "sent")
+            history = histories.get(row["id"], [])
+            decision_reason = history[-1] if history else None
+            if decision_reason is None and row["analysis_json"]:
+                previous = json.loads(row["analysis_json"])
+                code = previous.get("reason_code")
+                decision_reason = {
+                    "code": code, "label": ReasonCode(code).label if code is not None else None,
+                    "text": previous.get("reason"), "model": None,
+                    "validated": row["analysis_status"] == "success", "error_code": row["error_code"],
+                }
             records.append({"event": row["id"], "stock": row["stock"], "source": row["source_type"],
                             "state": state, "analysis": row["analysis_status"],
                             "error_code": row["error_code"], "attempts": row["attempts"],
-                            "delivery": receipts})
+                            "delivery": receipts, "decision_reason": decision_reason,
+                            "reason_history": history})
         return records
 
 
