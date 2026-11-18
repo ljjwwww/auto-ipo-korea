@@ -146,6 +146,9 @@ def terminal_text(value: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in {"status", "events", "backup", "restore"}:
+        from .maintenance import command
+        return command(argv)
     if argv and argv[0] == "telegram":
         from .telegram_command import command
         parser=argparse.ArgumentParser(description="Telegram 개인 연결·요약 미리보기·명시 전송")

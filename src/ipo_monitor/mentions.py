@@ -40,6 +40,8 @@ def ensure_schema(conn):
     columns={row[1] for row in conn.execute("PRAGMA table_info(mention_events)")}
     if "analysis_origin" not in columns:
         conn.execute("ALTER TABLE mention_events ADD COLUMN analysis_origin TEXT NOT NULL DEFAULT 'unknown'")
+    if "catalog_end" not in columns:
+        conn.execute("ALTER TABLE mention_events ADD COLUMN catalog_end TEXT")
 
 
 def _iso_date(value):
@@ -201,11 +203,11 @@ def discover(source_conn, aliases: Path, state_conn, today: date):
                                      'item_id': row['item_id'], 'content_hash': row['content_hash'],
                                      'stock': source['stock'], 'input_hash': entry['input_hash']})
                 inserted = state_conn.execute('''INSERT OR IGNORE INTO mention_events
-                    (event_hash,stock,source_id,source_type,item_id,snapshot_id,input_hash,input_json,created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?)''',
+                    (event_hash,stock,source_id,source_type,item_id,snapshot_id,input_hash,input_json,created_at,catalog_end)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
                     (event_hash, source['stock'], source['source_id'], source['source_type'],
                      row['item_id'], entry['snapshot_id'], entry['input_hash'],
-                     json.dumps(source, ensure_ascii=False, sort_keys=True), timestamp))
+                     json.dumps(source, ensure_ascii=False, sort_keys=True), timestamp, catalog[source['stock']]['end']))
                 summary['queued'] += inserted.rowcount
         state_conn.executemany('''INSERT INTO mention_seen(source_id,item_id,content_hash) VALUES (?,?,?)
             ON CONFLICT(source_id,item_id) DO UPDATE SET content_hash=excluded.content_hash''',
