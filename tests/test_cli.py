@@ -1,6 +1,6 @@
 """Offline CLI acceptance tests; every test owns its feed and database."""
 
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 import io
 import sqlite3
 import subprocess
@@ -166,6 +166,24 @@ class CliTests(unittest.TestCase):
         self.assertTrue(result.stderr.strip())
         self.assertNotIn("기준 목록:", result.stdout)
 
+    def test_oversized_local_feed_is_rejected_before_database_creation(self):
+        self.feed.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("크기 제한", result.stderr)
+        self.assertFalse(self.db.exists())
+
+    def test_dtd_is_rejected_before_xml_entity_expansion(self):
+        self.feed.write_text(
+            rss(item(1)).replace("?>", '?><!DOCTYPE rss [<!ENTITY name "기업">]>', 1)
+            .replace("후보 1", "&name;"),
+            encoding="utf-8",
+        )
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("DTD", result.stderr)
+        self.assertFalse(self.db.exists())
+
     def test_known_timezone_is_displayed_in_seoul(self):
         self.write_feed(item(1))
         result = self.run_cli()
@@ -190,7 +208,7 @@ class HttpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db = Path(directory) / "posts.sqlite3"
             stdout, stderr = io.StringIO(), io.StringIO()
-            with patch("ipo_monitor.httpx.get", return_value=response, side_effect=error):
+            with patch("ipo_monitor.httpx.stream", return_value=nullcontext(response), side_effect=error):
                 with redirect_stdout(stdout), redirect_stderr(stderr):
                     code = ipo_monitor.main([
                         "--feed", "https://example.invalid/rss", "--db", str(db)])
@@ -227,6 +245,18 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertIn("기준 목록: 1건", stdout)
         self.assertTrue(exists)
+
+    def test_oversized_http_response_is_rejected_without_database(self):
+        import httpx
+
+        response = httpx.Response(
+            200, content=b" " * (2 * 1024 * 1024 + 1),
+            request=httpx.Request("GET", "https://example.invalid/rss"))
+        code, stdout, stderr, exists = self.call_with_response(response=response)
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("크기 제한", stderr)
+        self.assertFalse(exists)
 
 
 if __name__ == "__main__":

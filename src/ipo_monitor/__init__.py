@@ -8,12 +8,15 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+from typing import Final
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 from xml.etree import ElementTree
 
 import feedparser
 import httpx
+
+MAX_FEED_BYTES: Final = 2 * 1024 * 1024
 
 
 class CollectionError(Exception):
@@ -26,18 +29,29 @@ def read_feed(source: str) -> tuple[str, bytes]:
         if url.username or url.password or url.query or url.fragment:
             raise CollectionError("공개 RSS URL에는 인증정보, 쿼리, fragment를 사용하지 마세요.")
         try:
-            response = httpx.get(source, timeout=20, follow_redirects=True)
-            response.raise_for_status()
+            with httpx.stream("GET", source, timeout=20, follow_redirects=True) as response:
+                response.raise_for_status()
+                chunks = []
+                size = 0
+                for chunk in response.iter_bytes(chunk_size=64 * 1024):
+                    size += len(chunk)
+                    if size > MAX_FEED_BYTES:
+                        raise CollectionError("RSS 크기 제한: 최대 2MB입니다.")
+                    chunks.append(chunk)
         except httpx.HTTPStatusError as exc:
             raise CollectionError(f"HTTP 오류: {exc.response.status_code}") from None
         except httpx.RequestError:
             raise CollectionError("네트워크 오류: 연결, DNS, TLS 또는 시간 초과를 확인하세요.") from None
-        return source, response.content
+        return source, b"".join(chunks)
     if "://" in source:
         raise CollectionError("HTTP(S) URL 또는 로컬 파일 경로를 사용하세요.")
     path = Path(source).expanduser().resolve()
     try:
-        return path.as_uri(), path.read_bytes()
+        with path.open("rb") as handle:
+            data = handle.read(MAX_FEED_BYTES + 1)
+        if len(data) > MAX_FEED_BYTES:
+            raise CollectionError("RSS 크기 제한: 최대 2MB입니다.")
+        return path.as_uri(), data
     except OSError:
         raise CollectionError("RSS 파일을 읽을 수 없습니다. 경로와 권한을 확인하세요.") from None
 
@@ -59,6 +73,12 @@ def published_time(raw: str) -> str | None:
 
 
 def parse_feed(data: bytes) -> list[dict]:
+    if len(data) > MAX_FEED_BYTES:
+        raise CollectionError("RSS 크기 제한: 최대 2MB입니다.")
+    # Remove NULs for the declaration check so UTF-16/32 cannot bypass it.
+    declarations = data.replace(b"\x00", b"").upper()
+    if b"<!DOCTYPE" in declarations or b"<!ENTITY" in declarations:
+        raise CollectionError("RSS DTD/엔티티 선언은 지원하지 않습니다.")
     try:
         root = ElementTree.fromstring(data)
     except ElementTree.ParseError:
