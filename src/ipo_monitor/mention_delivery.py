@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from . import CollectionError, terminal_text
-from .assessment import validate_response
+from .event_validation import validate_event_response
 from .daily_state import file_lock
 from .extraction import digest
 from .telegram import TelegramError, request_api
@@ -84,9 +84,7 @@ def _message(row):
             or source.get('source_type') != row['source_type']
             or source.get('source_id') != row['source_id']):
         raise ValueError
-    validate_response(result, source)
-    if not result['reason'].strip():
-        raise ValueError
+    validate_event_response(result, source)
     url = _url(source.get('url'), row['source_type'])
     stock = _clean(row['stock'], 80)
     creator = _clean(source.get('creator', ''), 40)
@@ -111,10 +109,21 @@ def _tables(conn):
     return {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
-def _load(conn, today, summary):
+def _closed_events(conn):
+    """Optional parent-owned controls table; absent means nothing is closed."""
+    if 'mention_event_controls' not in _tables(conn):
+        return set()
+    columns = {row[1] for row in conn.execute('PRAGMA table_info(mention_event_controls)')}
+    if not {'event_id', 'closed'}.issubset(columns):
+        return set()
+    return {row[0] for row in conn.execute('SELECT event_id FROM mention_event_controls WHERE closed=1')}
+
+
+def _load(conn, today, summary, destination=None):
     tables = _tables(conn)
     if not {'mention_settings', 'mention_catalog', 'mention_events'}.issubset(tables):
         return []
+    closed = _closed_events(conn)
     setting = conn.execute("SELECT value FROM mention_settings WHERE key='catalog_date'").fetchone()
     if not setting or setting[0] != today.isoformat():
         summary['status'] = 'stale_catalog'
@@ -134,6 +143,9 @@ def _load(conn, today, summary):
             catalog[stock] = end
     candidates = []
     for row in conn.execute('SELECT * FROM mention_events ORDER BY id'):
+        if row['id'] in closed:
+            summary['closed'] += 1
+            continue
         if row['source_type'] not in {'rss', 'youtube'}:
             summary['skipped_source'] += 1
             continue
@@ -148,6 +160,10 @@ def _load(conn, today, summary):
             continue
         if 'analysis_origin' not in row.keys() or row['analysis_origin'] != 'ollama':
             summary['skipped_fixture'] += 1
+            continue
+        receipt = _receipt(conn, row['id'], destination, tables)
+        if receipt is not None and receipt['state'] == 'sent':
+            summary['unchanged'] += 1
             continue
         try:
             message = _message(row)
@@ -202,7 +218,7 @@ def deliver_events(event_db, credential=None, allow_send=False, dry_run=False, t
     if not dry_run and allow_send is not True:
         raise CollectionError('mention_delivery_requires_opt_in')
     summary = dict(status='preview' if dry_run else 'empty', sent=0, failed=0,
-                   unknown=0, pending=0, expired=0, not_in_catalog=0,
+                   unknown=0, pending=0, expired=0, not_in_catalog=0, closed=0,
                    skipped_source=0, skipped_fixture=0, invalid=0, unchanged=0)
     path = Path(event_db).resolve()
     if not path.is_file():
@@ -216,14 +232,14 @@ def deliver_events(event_db, credential=None, allow_send=False, dry_run=False, t
         if dry_run:
             with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)) as conn:
                 conn.row_factory = sqlite3.Row
-                candidates = _load(conn, today, summary)
+                candidates = _load(conn, today, summary, destination)
                 ready = _classify(summary, candidates, conn, destination, today)
                 summary['messages'] = [message for _, message in ready]
                 summary['pending'] += len(ready)
             return summary
         with file_lock(path.with_suffix('.delivery.lock')), closing(sqlite3.connect(path, timeout=30)) as conn:
             conn.row_factory = sqlite3.Row
-            candidates = _load(conn, today, summary)
+            candidates = _load(conn, today, summary, destination)
             if summary['status'] == 'stale_catalog':
                 return summary
             if not candidates:
@@ -231,6 +247,8 @@ def deliver_events(event_db, credential=None, allow_send=False, dry_run=False, t
                     summary['status'] = 'error'
                 elif summary['pending']:
                     summary['status'] = 'pending'
+                elif summary['unchanged']:
+                    summary['status'] = 'unchanged'
                 return summary
             if destination is None:
                 destination = _destination(credential)

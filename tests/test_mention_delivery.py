@@ -81,6 +81,16 @@ class MentionDeliveryTests(unittest.TestCase):
             self.assertEqual(request.call_count,1)
         self.assertEqual(self.receipts(),[('sent',1,'2026-11-17')])
 
+    def test_confirmed_receipt_stays_unchanged_after_validation_policy_changes(self):
+        with patch('ipo_monitor.mention_delivery.request_api',return_value={'message_id':42}):
+            self.call()
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("UPDATE mention_events SET analysis_json='{}'")
+        with patch('ipo_monitor.mention_delivery.request_api',side_effect=AssertionError('resend')):
+            result=self.call()
+        self.assertEqual(result['status'],'unchanged')
+        self.assertEqual(result['invalid'],0)
+
     def test_dry_run_never_writes_or_reads_credentials_or_network(self):
         before=self.path.read_bytes()
         with patch('ipo_monitor.mention_delivery.request_api',side_effect=AssertionError('network')):
@@ -187,15 +197,51 @@ class MentionDeliveryTests(unittest.TestCase):
         with patch('ipo_monitor.mention_delivery.request_api',side_effect=AssertionError('send')):
             self.assertEqual(self.call()['invalid'],1)
 
-    def test_one_line_summary_collapses_controls_and_limits_length(self):
+    def test_control_characters_are_collapsed_in_one_line_message(self):
         with sqlite3.connect(self.path) as conn:
             result=json.loads(conn.execute('SELECT analysis_json FROM mention_events').fetchone()[0])
-            result['reason']='첫째\n둘째\t\x1b[31m'+'가'*400
+            result['reason']='\x1b[31m청약에 참여한다고 밝혔습니다.'
             conn.execute('UPDATE mention_events SET analysis_json=?',(json.dumps(result),))
         preview=deliver_events(self.path,dry_run=True,today=TODAY)
         message=preview['messages'][0]
         self.assertEqual(message.count('\n'),1);self.assertNotIn('\x1b',message)
-        self.assertLess(len(message),400)
+        self.assertIn('청약에 참여한다고 밝혔습니다.',message)
+
+    def test_fabricated_quote_is_invalid_and_never_sent(self):
+        with sqlite3.connect(self.path) as conn:
+            result=json.loads(conn.execute('SELECT analysis_json FROM mention_events').fetchone()[0])
+            result['evidence']='참여하겠습니다.'
+            conn.execute('UPDATE mention_events SET analysis_json=?',(json.dumps(result),))
+        with patch('ipo_monitor.mention_delivery.request_api',side_effect=AssertionError('send')):
+            preview=deliver_events(self.path,dry_run=True,today=TODAY)
+        self.assertEqual(preview['messages'],[]);self.assertEqual(preview['invalid'],1)
+
+    def test_reason_policy_rejections_are_counted_invalid_and_never_sent(self):
+        cases=(('가'*181,'too_long'),('첫째입니다. 둘째입니다.','multiple_sentences'),
+               ('','empty'),('공모가 4만원에 참여합니다.','fabricated_amount'),
+               ('11월 21일 마감입니다.','fabricated_date'))
+        for reason,label in cases:
+            with self.subTest(label):
+                with sqlite3.connect(self.path) as conn:
+                    result=json.loads(conn.execute('SELECT analysis_json FROM mention_events').fetchone()[0])
+                    result['reason']=reason
+                    conn.execute('UPDATE mention_events SET analysis_json=?',(json.dumps(result),))
+                with patch('ipo_monitor.mention_delivery.request_api',side_effect=AssertionError('send')):
+                    preview=deliver_events(self.path,dry_run=True,today=TODAY)
+                self.assertEqual(preview['messages'],[],label)
+                self.assertEqual(preview['invalid'],1,label)
+
+    def test_closed_control_events_are_skipped_and_counted(self):
+        with sqlite3.connect(self.path) as conn:
+            conn.execute('''CREATE TABLE mention_event_controls(event_id INTEGER PRIMARY KEY,
+                closed INTEGER NOT NULL DEFAULT 0,analysis_retry_at TEXT)''')
+            conn.execute('INSERT INTO mention_event_controls VALUES (1,1,NULL)')
+        with patch('ipo_monitor.mention_delivery.request_api',side_effect=AssertionError('send')):
+            result=self.call()
+        self.assertEqual(result['closed'],1);self.assertEqual(result['sent'],0)
+        self.assertEqual(result['status'],'empty')
+        with sqlite3.connect(self.path) as conn:
+            self.assertFalse(conn.execute("SELECT 1 FROM sqlite_master WHERE name='mention_delivery'").fetchone())
 
     def test_send_requires_opt_in_and_missing_file_not_created(self):
         with self.assertRaises(CollectionError):deliver_events(self.path,credential=CREDS,today=TODAY)

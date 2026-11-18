@@ -40,7 +40,7 @@ assessment=negative, stage=unknown이다. ❌나 별점은 개인의 청약 실�
 
 def request_settings():
     return {'endpoint': ENDPOINT, 'stream': False, 'think': False,
-                          'input_format': 'text-and-exact-excerpts-v2',
+                          'input_format': 'text-and-exact-excerpts-v3',
                           'instructions': INSTRUCTIONS,
                           'options': {'temperature': 0, 'num_predict': 1200}}
 
@@ -48,6 +48,21 @@ def request_settings():
 def cache_key(model, input_hash=None):
     """Credential-free identity shared by queue inspection and live transport."""
     return f'ollama:{VERSION}:{model}:{digest(request_settings())}'
+
+
+def evidence_choices(source):
+    """Exact quote options shown to the model; shared by request and validation."""
+    content = {k: v for k, v in source['content'].items() if k != 'segments'}
+    aliases = source.get('aliases', [source['stock']])
+    choices = []
+    for match in re.finditer(r'.+?(?:[.!?](?!\d)(?=\s|$)|\n|$)', content['text']):
+        quote = match.group().strip()
+        if quote and any(term.casefold() in quote.casefold()
+                         for term in aliases if isinstance(term, str)):
+            choices.append(quote[:250])
+    if not choices:
+        choices = [line.strip()[:250] for line in content['text'].splitlines() if line.strip()][:1]
+    return list(dict.fromkeys(choices))[:20]
 
 
 def _unique_object(pairs):
@@ -98,15 +113,7 @@ class OllamaAnalyzer:
             # The full text already contains all speech. Keep timestamped
             # segments locally for provenance, not twice in the model input.
             content={k:v for k,v in source['content'].items() if k!='segments'}
-            aliases=source.get('aliases',[source['stock']])
-            choices=[]
-            for match in re.finditer(r'[^\n.!?]+[.!?]?',content['text']):
-                quote=match.group().strip()
-                if quote and any(term.casefold() in quote.casefold() for term in aliases if isinstance(term,str)):
-                    choices.append(quote[:250])
-            if not choices:
-                choices=[line.strip()[:250] for line in content['text'].splitlines() if line.strip()][:1]
-            request_source={**source,'content':content,'evidence_choices':list(dict.fromkeys(choices))[:20]}
+            request_source={**source,'content':content,'evidence_choices':evidence_choices(source)}
             encoded = json.dumps(request_source, ensure_ascii=False, allow_nan=False)
         except (TypeError, ValueError):
             raise CollectionError('ollama_input_invalid') from None
