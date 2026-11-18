@@ -30,7 +30,7 @@ uv run ipo-monitor telegram enable
 uv run ipo-monitor telegram send --allow-send
 ```
 
-`enable`은 명시적인 지속 전송 동의입니다. 기존 Windows **매일 19:00 KST** 작업은 같은 `daily` 명령을 사용하므로 다음 실행부터 수집·분석 뒤 Telegram도 실행합니다. 등록 작업 인수에 토큰을 넣거나 새로 예약할 필요가 없습니다. 별도의 AI 요청은 `telegram send`에서 발생하지 않습니다. AI 대기 해소는 `daily --allow-api`가 담당합니다.
+`enable`은 명시적인 지속 전송 동의입니다. 기존 Windows 예약(정각 1시간 간간격 08:00~23:00 KST, 야간 제외)은 같은 `daily` 명령을 사용하므로 다음 실행부터 수집·분석 뒤 Telegram도 실행합니다. 등록 작업 인수에 토큰을 넣거나 새로 예약할 필요가 없습니다. 별도의 AI 요청은 `telegram send`에서 발생하지 않습니다. AI 대기 해소는 `daily --allow-api`가 담당합니다.
 
 끄기:
 
@@ -49,7 +49,7 @@ uv run ipo-monitor telegram disable
 
 ## 일일 AI 한도
 
-사용자 요청에 따라 `config/daily.toml`의 `max_calls_per_day = 600`입니다. Ollama 모델 인스턴스와 설정 검증도 600회를 허용합니다. 같은 한국 날짜의 이전 일일 요청도 합산하며 실패 요청을 환급하지 않습니다. 수동 `assess`/별도 실험 호출은 이 원장 밖입니다. 600은 **최대 횟수이지 자동으로 600회 호출한다는 뜻이 아닙니다.** 20분 실행 예산 후 새 AI 요청을 보류하고 다음 실행으로 넘기며, 성공 캐시를 재사용합니다. Windows 작업의 30분 제한 전에 정상 저장할 여유를 둡니다.
+사용자 요청에 따라 `config/daily.toml`의 `max_calls_per_day = 1200`입니다. Ollama 모델 인스턴스와 설정 검증도 1200회를 허용합니다. 같은 한국 날짜의 이전 일일 요청도 합산하며 실패 요청을 환급하지 않습니다. 수동 `assess`/별도 실험 호출은 이 원장 밖입니다. 1200은 **최대 횟수이지 자동으로 1200회를 호출한다는 뜻이 아닙니다.** 20분 실행 예산 후 새 AI 요청을 보류하고 다음 실행으로 넘기며, 성공 캐시를 재사용합니다. Windows 작업의 30분 제한 전에 정상 저장할 여유를 둡니다.
 
 ## 현재 분석 범위의 한계
 

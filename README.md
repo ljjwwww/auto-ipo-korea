@@ -12,6 +12,8 @@
 
 장애 단계 조회·개별 이벤트 복구·SQLite 백업/복원을 추가했습니다.
 [현재 운영과 복구 안내](docs/OPERATIONS.md)가 운영 명령의 기준입니다.
+운영 모델은 `nemotron-3-ultra`이며 AI의 고정 이유 번호·짧은 설명·모델·검증 결과를
+`status/events`에서 확인합니다. 검증이 거절된 응답도 비공개 분석 이력으로 보존합니다.
 
 ```bash
 uv run ipo-monitor status
@@ -30,7 +32,7 @@ uv run ipo-monitor restore --source data/backups/2026-11-18 --output data/restor
 | 공통 분석 입력·실험 가중 판단·상태 전이·알림 미리보기 | fixture와 Ollama 지원. 소량 실검증·mock 검증 |
 | 실제 AI 분석 정확도 | Ollama 소량 실검증 완료. 인용·종목 연결 오탐 발견/보류 처리, 운영 품질 미검증 |
 | Ollama Cloud 연동 | 숨김 키 입력·인증·실제 모델 호출·제한/캐시 검증. 운영 품질 검증은 후속 |
-| 일일 실행·Windows 예약 | 구현. 매일19:00 KST, 2026-11-18 독립 예약 실행 성공 기록 |
+| 일일 실행·Windows 예약 | 구현. 1시간 간간격 정각 감시(08:00~23:00, 야간 제외), 2026-11-18 독립 예약 실행 검증 기록 |
 | Telegram 새 언급 알림 | 구현. 실제 새 이벤트1건 전송·반복 무발송 확인, 앱 열람은 미확인 |
 | 상태·복구·백업 | 읽기 전용 상태, 감사 이력과 개별 복구, 새 폴더로 SQLite 백업/복원 |
 | 공식 공시 대조·Slack | 미구현 |
@@ -40,7 +42,7 @@ uv run ipo-monitor restore --source data/backups/2026-11-18 --output data/restor
 
 ## 일일 실행 / Telegram 연결
 
-일일 AI 상한은 사용자 요청으로 **600회**입니다. 호출마다 비용/사용량이 발생할 수 있으며 고정 금액 한도는 아닙니다. 성공 캐시 재사용·입력별 재시도 한도·20분 실행 예산·중복 실행 잠금이 있습니다.
+일일 AI 상한은 사용자 요청으로 **1200회**입니다(2026-11-18 정각 감시 전환에 맞춰 600에서 증액). 호출마다 비용/사용량이 발생할 수 있으며 고정 금액 한도는 아닙니다. 성공 캐시 재사용·입력별 재시도 한도·20분 실행 예산·중복 실행 잠금이 있습니다.
 
 ```bash
 uv run ipo-monitor daily --dry-run
@@ -50,7 +52,7 @@ uv run ipo-monitor telegram enable      # 준비 후 지속 전송 명시 활성
 uv run ipo-monitor telegram send --allow-send
 ```
 
-[Telegram 연결 안내](docs/TELEGRAM_SETUP.md)와 [매일19시 Windows/WSL 예약](docs/WINDOWS_SCHEDULER.md)을 확인하세요. 키/대화 연결 전에는 기본 비활성입니다. 현재 일일 블로그 입력은 RSS이며 자동 본문 재분석은 아직 미연결, 유튜브는 최신3개만 수집합니다.
+[Telegram 연결 안내](docs/TELEGRAM_SETUP.md)와 [정각 감시(08:00~23:00, 야간 제외) Windows/WSL 예약](docs/WINDOWS_SCHEDULER.md)을 확인하세요. 키/대화 연결 전에는 기본 비활성입니다. 현재 일일 블로그 입력은 RSS이며 자동 본문 재분석은 아직 미연결, 유튜브는 최신3개만 수집합니다.
 
 ## Ollama Cloud 키 준비
 
