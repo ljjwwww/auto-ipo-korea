@@ -53,6 +53,36 @@ class OllamaIntegrationTests(unittest.TestCase):
         code,out=self.call('notification-preview','--db',str(self.db),'--aliases',str(self.sample/'stocks.toml'))
         self.assertEqual(code,0,out);self.assertIn('Ollama 실제 분석',out);self.assertNotIn('고정 응답 기반',out)
         self.assertNotIn('mock-key',out)
+    def test_decision_failure_keeps_paid_cache_and_rerun_reuses(self):
+        from ipo_monitor import CollectionError
+        import ipo_monitor.assessment as assessment
+        real_enqueue=assessment.enqueue
+        seen=[]
+        def flaky(*args,**kwargs):
+            if not seen:
+                seen.append(1)
+                raise CollectionError('preview_store_failed')
+            return real_enqueue(*args,**kwargs)
+        with patch('ipo_monitor.credentials.read_key',return_value='mock-key'), \
+             patch('httpx.post',side_effect=self.response) as post, \
+             patch('ipo_monitor.assessment.enqueue',side_effect=flaky):
+            code,out=self.call(*self.args())
+        self.assertEqual(code,1,out);self.assertIn('preview_store_failed',out)
+        self.assertEqual(post.call_count,3)
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("select count(*) from observation_analyses where status='success'").fetchone()[0],3)
+            self.assertEqual(c.execute('select count(*) from ollama_usage where http_status=200').fetchone()[0],3)
+            self.assertEqual(c.execute('select count(*) from decision_versions').fetchone()[0],0)
+            self.assertEqual(c.execute('select count(*) from notification_outbox').fetchone()[0],0)
+        with patch('ipo_monitor.credentials.read_key',return_value='mock-key'), \
+             patch('httpx.post',side_effect=self.response) as post:
+            code,out=self.call(*self.args())
+            self.assertEqual(code,0,out);self.assertEqual(post.call_count,0)
+            self.assertIn('재사용 3건',out);self.assertIn('실제 Ollama 요청 0건',out)
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute('select count(*) from decision_versions').fetchone()[0],1)
+            self.assertEqual(c.execute('select count(*) from notification_outbox').fetchone()[0],1)
+
     def test_fixture_and_live_cache_are_separate(self):
         code,out=self.call('assess','--db',str(self.db),'--fixture',str(self.sample/'responses.json'),'--aliases',str(self.sample/'stocks.toml'))
         self.assertEqual(code,0,out)

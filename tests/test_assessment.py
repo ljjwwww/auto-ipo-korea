@@ -14,6 +14,12 @@ from ipo_monitor.evidence import build_inputs
 
 
 class AssessmentTests(unittest.TestCase):
+    def test_mixed_star_cross_is_held_as_conflict_instead_of_scored(self):
+        from ipo_monitor.assessment import site_rating
+        source = {"content": {"ratings": [
+            {"stars": None, "raw_marker": "⭐❌", "marker_conflict": True}]}}
+        self.assertEqual(site_rating(source), (None, "혼합", True))
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name);shutil.copytree('samples/assessment',self.root/'sample')
@@ -58,6 +64,72 @@ class AssessmentTests(unittest.TestCase):
         code,out=self.query('notification-preview','--stock','가상기업');self.assertIn('미리보기 0건',out)
         code,out=self.assess();self.assertEqual(code,1,out);self.assertIn('추가 확인',out)
         self.assertEqual(self.rows('select count(*) from decision_versions'),[(4,)])
+    def test_paid_result_is_locked_while_analyze_runs(self):
+        from types import SimpleNamespace
+        import ipo_monitor.assessment as assessment
+        db=str(self.db);observed=[]
+        fixture=assessment.FixtureAnalyzer(self.sample/'responses.json')
+        class LockCheckingAnalyzer:
+            origin='fixture'
+            def key(self,h):return 'lock-check:'+h
+            def analyze(self,h,source):
+                other=sqlite3.connect(db,timeout=0)
+                try:
+                    other.execute('BEGIN IMMEDIATE')
+                except sqlite3.OperationalError:
+                    observed.append('locked')
+                else:
+                    observed.append('unlocked');other.rollback()
+                finally:
+                    other.close()
+                return fixture.analyze(h,source)
+        args=SimpleNamespace(db=self.db,policy=self.policy,aliases=self.sample/'stocks.toml',
+            stock=None,backend='fixture',fixture=self.sample/'responses.json',model=None,
+            allow_api=False,max_calls=9,channel='telegram',destination='preview')
+        out=io.StringIO()
+        with redirect_stdout(out),redirect_stderr(out):
+            code=assessment.run_assessment(args,analyzer_override=LockCheckingAnalyzer())
+        self.assertEqual(code,0,out.getvalue())
+        # Another process cannot start its own write transaction during a paid call.
+        self.assertEqual(observed,['locked']*9)
+
+    def test_collect_during_assessment_blocks_stale_decisions_until_explicit_rerun(self):
+        from types import SimpleNamespace
+        import ipo_monitor.assessment as assessment
+        real_checkpoint=assessment.checkpoint_entries;state={'inserted':False}
+        def checkpoint_then_collect(*args,**kwargs):
+            result=real_checkpoint(*args,**kwargs)
+            if not state['inserted']:
+                state['inserted']=True
+                with sqlite3.connect(self.db) as other:
+                    other.execute('''INSERT INTO source_attempts
+                      (source_id,started_at,finished_at,status,error,item_count,new_count,changed_count,unchanged_count)
+                      VALUES ('sample-girit-site','x','y','error','concurrent collect failure',0,0,0,0)''')
+            return result
+        args=SimpleNamespace(db=self.db,policy=self.policy,aliases=self.sample/'stocks.toml',
+            stock=None,backend='fixture',fixture=self.sample/'responses.json',model=None,
+            allow_api=False,max_calls=9,channel='telegram',destination='preview')
+        out=io.StringIO()
+        with patch('ipo_monitor.assessment.checkpoint_entries',side_effect=checkpoint_then_collect), \
+             redirect_stdout(out),redirect_stderr(out):
+            code=assessment.run_assessment(args)
+        self.assertEqual(code,1,out.getvalue())
+        self.assertIn('assessment_inputs_changed',out.getvalue())
+        self.assertTrue(state['inserted'])
+        # Paid results stay durable, but no decision may be built from old provenance.
+        self.assertEqual(self.rows('select count(*) from observation_analyses'),[(9,)])
+        self.assertEqual(self.rows('select count(*) from decision_versions'),[(0,)])
+        self.assertEqual(self.rows('select count(*) from notification_outbox'),[(0,)])
+        # Only an explicit rerun judges the newer collection state, with no repeated paid calls.
+        out=io.StringIO()
+        with redirect_stdout(out),redirect_stderr(out):
+            code=assessment.run_assessment(args)
+        self.assertEqual(code,0,out.getvalue())
+        self.assertIn('호출 0건 · 재사용 9건',out.getvalue())
+        self.assertEqual(self.rows('select count(*) from decision_versions'),[(3,)])
+        self.assertTrue(any('concurrent collect failure' in row[0]
+                            for row in self.rows('select result_json from decision_versions')))
+
     def test_invalid_schema_and_ungrounded_quote_retry(self):
         p=self.sample/'responses.json';r=json.loads(p.read_text());key=next(iter(r));r[key]['evidence']='원문에 없는 허위 문구';p.write_text(json.dumps(r))
         for _ in range(2):

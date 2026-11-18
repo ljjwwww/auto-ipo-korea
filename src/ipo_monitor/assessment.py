@@ -95,6 +95,8 @@ def site_rating(source):
             raise CollectionError('rating_observation_invalid')
         if not isinstance(marker,str):
             raise CollectionError('rating_observation_invalid')
+        if row.get('marker_conflict') or ('⭐' in marker and '❌' in marker):
+            return None,'혼합',True
         if stars is not None or marker:
             values.append((stars,marker))
     unique=list(dict.fromkeys(values))
@@ -108,51 +110,84 @@ class AnalysisDeferred(CollectionError):
     """Input waits in the daily queue; do not persist it as an analysis failure."""
 
 
-def analyze_entries(conn,entries,analyzer):
+def analyze_entry(conn,entry,analyzer):
+    """Cache-or-call one common input; the caller owns the write lock/transaction."""
+    source=entry['input'];h=entry['input_hash'];key=analyzer.key(h)
+    # Validate deterministic source fields before dispatching any paid request.
+    rating,marker,rating_conflict=site_rating(source) if source['source_type']=='ipo_site' else (None,'',False)
+    ambiguous=entry.get('match_quality')=='substring_candidate'
+    if ambiguous:
+        key+=':unconfirmed-entity-v1'
+    prior=conn.execute('SELECT * FROM observation_analyses WHERE input_hash=? AND backend_key=?',(h,key)).fetchone()
+    reused=attempted=failed=deferred=False
+    if prior and prior['status']=='success':
+        response=json.loads(prior['response_json']);status='success';error=None;reused=True
+    else:
+        response=None;error=None;attempted=True
+        try:
+            if ambiguous:
+                raise CollectionError('analysis_target_ambiguous: 부분 문자열만 일치, 종목 연결 추가 확인 필요')
+            response=analyzer.analyze(h,source)
+        except AnalysisDeferred:
+            deferred=True;attempted=False
+            error="daily_queue_pending"
+        except CollectionError as exc:
+            error=str(exc);failed=True
+        status='unprocessed' if deferred else ('error' if error else 'success')
+        if not deferred:
+            conn.execute('''INSERT INTO observation_analyses
+          (input_hash,backend_key,status,response_json,error,attempts,updated_at)
+          VALUES (?,?,?,?,?,1,?) ON CONFLICT(input_hash,backend_key) DO UPDATE SET
+          status=excluded.status,response_json=excluded.response_json,error=excluded.error,
+          attempts=attempts+1,updated_at=excluded.updated_at''',
+          (h,key,status,json.dumps(response,ensure_ascii=False) if response else None,error,now()))
+    analysis_row=conn.execute('SELECT id FROM observation_analyses WHERE input_hash=? AND backend_key=?',(h,key)).fetchone()
+    analysis_id=analysis_row[0] if analysis_row and status!='unprocessed' else None
+    signal={'stock':source['stock'],'source_id':source['source_id'],'source_type':source['source_type'],
+        'creator':source['creator'],'snapshot_id':entry['snapshot_id'],'observed_at':entry['observed_at'],
+        'published_at':source['published_at'],'published_raw':source['published_raw'],'url':source['url'],
+        'input_hash':h,'analysis_id':analysis_id,'backend_key':key,
+        'source_status':entry['source_status'],'source_error':entry['source_error'],
+        'match_quality':entry.get('match_quality','unknown'),
+        'opinion':'판단 불가','assessment':'unknown','stage':'unknown','evidence':'','reason':'',
+        **(response or {}),'rating':rating,'marker':marker,'rating_conflict':rating_conflict,
+        'analysis_status':status,'error':error,'raw_ratings':source['content']['ratings'],'analysis_reason':response['reason'] if response else ''}
+    # Timestamp links are grounded in stored caption segments, not invented by the model.
+    signal['segments']=[s for s in source['content']['segments'] if response and response['evidence'] in s['text']]
+    return signal,{'reused':reused,'call':attempted,'failure':failed}
+
+
+def checkpoint_entries(conn,entries,analyzer,record_usage):
+    """Commit each paid result and its usage before any decision is written.
+
+    The per-input BEGIN IMMEDIATE is held across the network call, so an overlapping
+    run blocks here and then reuses the committed success instead of paying twice.
+    A later decision error can only roll back decision rows, never paid results.
+    """
     signals=[];calls=reused=failures=0
+    usage_seen=len(getattr(analyzer,'usage',[]) or [])
     for entry in entries:
-        source=entry['input'];h=entry['input_hash'];key=analyzer.key(h)
-        ambiguous=entry.get('match_quality')=='substring_candidate'
-        if ambiguous:
-            key+=':unconfirmed-entity-v1'
-        prior=conn.execute('SELECT * FROM observation_analyses WHERE input_hash=? AND backend_key=?',(h,key)).fetchone()
-        if prior and prior['status']=='success':
-            response=json.loads(prior['response_json']);status='success';error=None;reused+=1
-        else:
-            response=None;error=None;calls+=1;deferred=False
-            try:
-                if ambiguous:
-                    raise CollectionError('analysis_target_ambiguous: 부분 문자열만 일치, 종목 연결 추가 확인 필요')
-                response=analyzer.analyze(h,source)
-            except AnalysisDeferred:
-                deferred=True;calls-=1
-                error="daily_queue_pending"
-            except CollectionError as exc:
-                error=str(exc);failures+=1
-            status='unprocessed' if deferred else ('error' if error else 'success')
-            if not deferred:
-                conn.execute('''INSERT INTO observation_analyses
-              (input_hash,backend_key,status,response_json,error,attempts,updated_at)
-              VALUES (?,?,?,?,?,1,?) ON CONFLICT(input_hash,backend_key) DO UPDATE SET
-              status=excluded.status,response_json=excluded.response_json,error=excluded.error,
-              attempts=attempts+1,updated_at=excluded.updated_at''',
-              (h,key,status,json.dumps(response,ensure_ascii=False) if response else None,error,now()))
-        analysis_row=conn.execute('SELECT id FROM observation_analyses WHERE input_hash=? AND backend_key=?',(h,key)).fetchone()
-        analysis_id=analysis_row[0] if analysis_row and status!='unprocessed' else None
-        rating,marker,rating_conflict=site_rating(source) if source['source_type']=='ipo_site' else (None,'',False)
-        signal={'stock':source['stock'],'source_id':source['source_id'],'source_type':source['source_type'],
-            'creator':source['creator'],'snapshot_id':entry['snapshot_id'],'observed_at':entry['observed_at'],
-            'published_at':source['published_at'],'published_raw':source['published_raw'],'url':source['url'],
-            'input_hash':h,'analysis_id':analysis_id,'backend_key':key,
-            'source_status':entry['source_status'],'source_error':entry['source_error'],
-            'match_quality':entry.get('match_quality','unknown'),
-            'opinion':'판단 불가','assessment':'unknown','stage':'unknown','evidence':'','reason':'',
-            **(response or {}),'rating':rating,'marker':marker,'rating_conflict':rating_conflict,
-            'analysis_status':status,'error':error,'raw_ratings':source['content']['ratings'],'analysis_reason':response['reason'] if response else ''}
-        # Timestamp links are grounded in stored caption segments, not invented by the model.
-        signal['segments']=[s for s in source['content']['segments'] if response and response['evidence'] in s['text']]
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            signal,counts=analyze_entry(conn,entry,analyzer)
+            if record_usage:
+                usage=getattr(analyzer,'usage',[]) or []
+                for item in usage[usage_seen:]:
+                    conn.execute('''INSERT INTO ollama_usage
+                      (input_hash,model,input_tokens,output_tokens,http_status,thinking_used,recorded_at)
+                      VALUES (?,?,?,?,?,?,?)''',
+                      (item['input_hash'],item['model'],item['input_tokens'],item['output_tokens'],
+                       item['http_status'],item['thinking_used'],now()))
+                usage_seen=len(usage)
         signals.append(signal)
+        calls+=counts['call'];reused+=counts['reused'];failures+=counts['failure']
     return signals,calls,reused,failures
+
+
+def entry_state(entries):
+    """Provenance identity used to detect a collect that landed mid-assessment."""
+    return tuple((e['input_hash'],e['snapshot_id'],e.get('match_quality'),e['source_status'],e['source_error'])
+                 for e in entries)
 
 
 def run_assessment(args, analyzer_override=None):
@@ -178,25 +213,25 @@ def run_assessment(args, analyzer_override=None):
             analyzer=OllamaAnalyzer(args.model,args.allow_api,args.max_calls,read_key())
         with closing(connect(args.db)) as conn:
             ensure_schema(conn)
+            record_usage=args.backend=='ollama'
             with conn:
                 conn.execute('BEGIN IMMEDIATE')
                 entries=build_inputs(conn,args.aliases,args.stock)
                 if not entries:
                     raise CollectionError('no_matching_analysis_inputs')
-                if args.backend=='ollama' and not getattr(analyzer,'can_defer',False):
-                    required=sum(not conn.execute('''SELECT 1 FROM observation_analyses
-                      WHERE input_hash=? AND backend_key=? AND status='success' ''',
-                      (e['input_hash'],analyzer.key(e['input_hash']))).fetchone()
-                      for e in entries if e.get('match_quality')!='substring_candidate')
-                    if required>args.max_calls:
-                        raise CollectionError(f'ollama_call_budget_exceeded: 필요한 요청 {required}건 > 설정 {args.max_calls}건. 호출하지 않았습니다.')
-                signals,calls,reused,failures=analyze_entries(conn,entries,analyzer)
-                if args.backend=='ollama':
-                    conn.executemany('''INSERT INTO ollama_usage
-                      (input_hash,model,input_tokens,output_tokens,http_status,thinking_used,recorded_at)
-                      VALUES (?,?,?,?,?,?,?)''',
-                      [(u['input_hash'],u['model'],u['input_tokens'],u['output_tokens'],
-                        u['http_status'],u['thinking_used'],now()) for u in analyzer.usage])
+            if args.backend=='ollama' and not getattr(analyzer,'can_defer',False):
+                required=sum(not conn.execute('''SELECT 1 FROM observation_analyses
+                  WHERE input_hash=? AND backend_key=? AND status='success' ''',
+                  (e['input_hash'],analyzer.key(e['input_hash']))).fetchone()
+                  for e in entries if e.get('match_quality')!='substring_candidate')
+                if required>args.max_calls:
+                    raise CollectionError(f'ollama_call_budget_exceeded: 필요한 요청 {required}건 > 설정 {args.max_calls}건. 호출하지 않았습니다.')
+            signals,calls,reused,failures=checkpoint_entries(conn,entries,analyzer,record_usage)
+            with conn:
+                conn.execute('BEGIN IMMEDIATE')
+                # No implicit retry: a collect that landed during checkpoints requires an explicit rerun.
+                if entry_state(build_inputs(conn,args.aliases,args.stock))!=entry_state(entries):
+                    raise CollectionError('assessment_inputs_changed: 분석 중 수집 결과가 변경되었습니다. 저장한 분석은 유지되며 다시 실행해야 판단을 갱신합니다.')
                 stock_names=sorted({s['stock'] for s in signals})
                 decisions_created=previews_created=transitions_created=0
                 for stock in stock_names:
