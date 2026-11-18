@@ -1,6 +1,13 @@
 # 세 출처 공통 입력 → 실험 판단 → 미발송 알림
 
-구현 기준: **2026-11-15**. 이 단계는 **고정 응답으로 전체 데이터 흐름을 검증**합니다. AI 키·메신저 키 없이 실행하며 실제 AI·Telegram·Slack을 호출하지 않습니다. 초기 가중치는 검증된 투자 성과 모델이 아니라 조정 가능한 **검토 우선순위**입니다.
+현재 기준: **2026-11-18**. `assess`는 fixture와 명시 승인된 Ollama를 지원하는 별도 실험 경로입니다.
+아래 fixture 예제는 키·네트워크 없이 동작하며 실제 AI/메신저를 호출하지 않습니다.
+현재 예약 알림은 [언급 이벤트](MENTION_NOTIFICATIONS.md)이고, 초기 가중치는 검증된 투자 성과 모델이 아닙니다.
+
+분석은 입력마다 결과·사용량을 커밋하고 판단·전이·미리보기는 별도 트랜잭션으로 저장합니다.
+판단 실패 후 재실행은 성공 분석을 재사용합니다. 분석 도중 수집 상태가 바뀌면
+`assessment_inputs_changed`로 중단하며 저장한 분석은 유지합니다. 명시적으로 재실행해 최신 판단을 만듭니다.
+프로세스 종료/디스크 장애가 원격 응답 직후 로컬 커밋 전에 발생하는 구간의 exactly-once 과금은 보장하지 않습니다.
 
 수집 명령과 실제 출처 범위는 [MULTI_SOURCE_USAGE.md](MULTI_SOURCE_USAGE.md)를 참고하세요.
 
@@ -55,7 +62,9 @@
 
 ## 3. 고정 응답 계약
 
-`assess`는 현재 `--fixture`가 필수이며 실모델 백엔드를 선택하는 옵션은 없습니다. fixture 파일은 **`input_hash → 응답 객체`** JSON입니다. 응답에는 다음 문자열 필드가 정확히 있어야 합니다.
+기본 `--backend fixture`는 `--fixture`가 필수입니다. Ollama는 [설정 안내](OLLAMA_SETUP.md)의
+`--backend ollama --model --stock --allow-api --max-calls` 계약을 사용합니다.
+fixture 파일은 **`input_hash → 응답 객체`** JSON입니다. 응답에는 다음 문자열 필드가 정확히 있어야 합니다.
 
 | 필드 | 허용 값·검증 |
 | --- | --- |
@@ -128,8 +137,9 @@
 
 - `collect`는 세 출처 관찰 자료를 수집할 뿐 위 가중 판단을 자동 실행하지 않습니다.
 - 구형 `extract/candidates`와 기존 블로그용 `pipeline/pipeline-results`는 별개 경로입니다. 새 공통 입력·판단은 `evidence-inputs/assess/decisions/notification-preview`로 다룹니다.
-- Ollama/OpenAI 실모델을 이 공통 분석 경로에 연결하거나 실제 의미 정확도를 검증하지 않았습니다.
-- 실제 Telegram/Slack 전송, 청약 N일 전 예약, 공식 정보 대조, 자동주문은 이번 기능에 포함하지 않았습니다.
+- 공통 assess는 Ollama를 지원하며 제한된 실제 연결 검증 이력이 있습니다. 운영 의미 정확도 검증은 완료하지 않았습니다.
+- assess는 실제 메시지를 보내지 않습니다. 현재 Telegram 운영 전송은 별도 mention_events 경로입니다.
+  Slack·청약 N일 전 알림·공식 정보 대조·자동주문은 미구현입니다.
 
 ### 문서 검증
 

@@ -1,6 +1,31 @@
 # 아키텍처
 
-현재 구현 기준: **2026-11-15**. 제품 의도는 [PRODUCT_VISION.md](PRODUCT_VISION.md), 재개 시점의 결정과 검증 이력은 [HANDOFF_OLLAMA.md](HANDOFF_OLLAMA.md)를 참고합니다.
+현재 구현 기준: **2026-11-18**. 운영 명령과 복구는 [OPERATIONS.md](OPERATIONS.md),
+알림 정책은 [MENTION_NOTIFICATIONS.md](MENTION_NOTIFICATIONS.md)가 기준이다.
+
+## 현재 운영 경로
+
+`Windows → scheduler_entry → daily → mention_workflow`가 세 출처를 수집하고
+`mentions`가 월별 목록·출처별 기준선·새 언급을 저장한다.
+`event_validation`은 요약의 정확한 인용·대상·수치·날짜·명시적 의사를 검사하고
+`mention_delivery`가 같은 검증 후 전송 원장을 저장한다. 전체 종목 digest와 분리되어 있다.
+`maintenance`는 상태/복구/백업 CLI, `event_operations`는 개별 제어·감사 이력,
+`backup`은 비밀 파일을 제외한 SQLite 스냅샷과 새 폴더 복원을 담당한다.
+
+운영 DB는 `data/daily.sqlite3`, `data/daily-ledger.sqlite3`, `data/mention-events.sqlite3`이다.
+`source_attempts.warning/metadata_json`은 영상창 누락 가능성과 자막 확인 시각을 저장한다.
+자막 확인 시각은 원문 hash에서 제외하므로 동일 자막 재확인으로 새 이벤트가 생기지 않는다.
+기존 테이블은 보존하며 이벤트의 catalog_end, 개별 제어/감사 테이블은 추가적으로 이행한다.
+
+별도 `assess`는 fixture/Ollama를 지원한다. 입력별 write lock 안에서 분석·사용량을 커밋한 뒤
+별도 트랜잭션에서 판단·전이·미리보기를 저장한다. 뒤쪽 실패는 성공 분석을 지우지 않는다.
+수집 상태가 중간에 바뀌면 `assessment_inputs_changed`로 중단하며 자동 유료 재호출하지 않는다.
+RSS는 원격/로컬2MB·DTD/entity 거절, 사이트는 인식한 IPO 표 구조 변경을 오류로 기록한다.
+
+## 이전 구현 기록 — 2026-11-15
+
+아래는 초기 계층의 설계 기록이다. 당시의 미구현/fixture-only/RSS-only/미검증 설명은
+현재 운영 상태가 아니며 위 경로와 최신 운영 문서를 우선한다.
 
 ## 0.2.0 공통 분석·실험 판단·미리보기 계층
 

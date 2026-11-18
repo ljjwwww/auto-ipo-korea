@@ -1,5 +1,11 @@
 # 개발과 검증
 
+2026-11-18 현재 운영/복구는 [OPERATIONS.md](OPERATIONS.md), 알림 정책은
+[MENTION_NOTIFICATIONS.md](MENTION_NOTIFICATIONS.md)를 우선한다.
+아래 날짜가 붙은 테스트 개수는 당시 기록이다. 현재 전체 회귀는 tests/ 자동 발견으로 확인한다.
+트랜잭션·수집·요약 검증 변경에는 오류 전후의 실제 CLI/SQLite 결과를 남기며
+고정 응답 성공을 모델 정확도로 해석하지 않는다. 테스트용 키·DB와 운영 데이터를 분리한다.
+
 현재 구현과 제한은 [ARCHITECTURE.md](ARCHITECTURE.md), 다음 작업의 결정 사항은 [HANDOFF_OLLAMA.md](HANDOFF_OLLAMA.md)를 먼저 읽습니다. 이 문서의 예제는 프로젝트 루트에서 실행합니다.
 
 ## 환경
@@ -61,7 +67,9 @@ git diff --check
 - `cache_key(source)`: 제공자·모델·프롬프트/스키마 버전을 구별하는 안정적인 키.
 - `extract(source)`: 스키마/근거 검증을 통과한 결과 또는 `ExtractionError`.
 
-Ollama Cloud는 다음 작업 후보일 뿐 현재 지원하지 않습니다. 현행 Cloud 구조화 출력 지원 여부를 공식 문서에서 다시 확인하고, 로컬 Ollama 전용 예제를 그대로 적용하지 않습니다. JSON을 프롬프트로 요청하는 것과 서버가 스키마를 강제하는 것은 다릅니다. 기존 `semantic.validate` 및 본문 확인 정책을 유지하고, JSON 형식 오류·잘림·거절·429·timeout을 mock으로 검증합니다.
+Ollama Cloud는 공통 assess와 이벤트 흐름에 구현되어 있습니다. 새 제공자 확장 시에는 현행 공식 계약을 확인하고
+로컬 Ollama 전용 예제를 Cloud에 그대로 적용하지 않습니다. 기존 `semantic.validate` 및 본문 확인 정책을 유지하고,
+JSON 형식 오류·잘림·거절·429·timeout을 mock으로 검증합니다.
 
 OpenAI와 Ollama의 키·엔드포인트·캐시 이름을 분리합니다. 기존 OpenAI 승인이나 키를 다른 제공자에 재사용하지 않습니다. 제공자/모델/비용/대상 범위는 사용자와 인터뷰로 확정하고, 실호출 승인이 있을 때만 실행합니다. 실패 교정을 위한 추가 호출도 예산과 승인을 소비합니다.
 

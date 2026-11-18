@@ -69,3 +69,12 @@ Telegram 전달은 KST 날짜 기준 청약 종료일 다음 날부터 제외한
 ## 2026-11-18 예약 실행 장애 수정과 실제 검증
 
 WSL leading flags를 무조건 인용하면 bash가 -d를 명령으로 읽어127로 실패한다. Windows scripts v2는 공백 있는 값만 인용하고 로컬 런처가 시작/종료/stdout/stderr를 기록한다. 예약 계정은 표시 이름이 아니라 SID로 대조하고 CIM enum값을 검증한다. 예약 전용 scheduler_entry가 user-local 도구 PATH를 복원한다.5분 후 등록한 일회성 작업이09:34:02~09:34:15 에이전트 개입 없이 실행되어 종료0/수집3출처성공/실제이벤트1/AI1/Telegram전송1을 확인했다. tests316. 실제 런타임 증거는 docs/WINDOWS_SCHEDULER.md 및 MENTION_NOTIFICATIONS.md 최신부분이 우선한다.
+
+## 2026-11-18 운영 보강
+
+`docs/OPERATIONS.md`가 상태·개별 복구·백업 명령의 현재 계약이다. `status/events` 조회는 읽기 전용이며 키/API를 사용하지 않는다.
+수동 assess는 입력별 분석·usage를 먼저 커밋하고 판단을 별도 저장한다. 동시 수집 변경은 `assessment_inputs_changed`로 중단하며 자동 유료 재호출하지 않는다.
+이벤트는 인용 선택지·대상 구절의 수치/날짜·명시적 의사를 분석 저장 전과 전송 전에 검증한다. 자유 요약의 의미 정확도 전체를 보장하는 것은 아니다.
+분석 재시도 epoch와 전송 복구는 감사 이력을 남기며 unknown 재시도에는 `--confirm-duplicate-risk`가 필요하다. 일일 호출 원장은 삭제하지 않는다.
+SQLite backup/restore는 새 data/ 하위 디렉터리만 만들고 운영 DB를 덮어쓰지 않는다. 백업에는 키를 넣지 않으며 DB 원문은 비공개로 보관한다.
+회귀374개와 CLI/임시 SQLite QA를 확인했다. 이 보강 작업은 실제 유료 AI·Telegram·예약 설정을 실행/변경한 검증이 아니다.
